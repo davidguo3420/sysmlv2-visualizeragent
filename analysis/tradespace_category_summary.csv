@@ -1,0 +1,9 @@
+category,alternatives,frontier_candidates,promising_candidates,avg_similarity_percent,avg_readiness_percent,avg_l1_structural_score,avg_l2_behavioral_score,avg_l3_property_score,avg_observability_score,avg_repair_score,avg_tradespace_score
+medical,404,114,284,65.3,90.8,98.2,82.8,85.8,97.3,95.2,84.2
+energy,70,20,49,65.3,89.3,96.7,81.2,84.0,97.2,92.7,83.3
+industrial,398,126,266,65.2,89.3,98.5,79.6,83.4,96.9,94.2,83.1
+electronics,368,105,249,64.7,87.9,96.8,78.8,81.8,95.8,91.2,82.0
+aerospace,158,37,100,61.7,80.5,90.0,73.9,73.1,86.1,83.8,75.8
+software,111,18,72,62.6,76.0,83.6,69.9,70.7,82.6,75.9,72.6
+automotive,304,44,137,62.9,62.3,73.4,58.3,54.0,64.2,62.2,62.4
+unknown,122,13,41,51.7,48.2,59.0,44.1,41.0,50.6,46.1,49.0

@@ -1,0 +1,7 @@
+id,type,option_name,representative,primary_strength,sourced_specs,source_keys
+sensor_lwir_thermal,sensor,LWIR thermal camera module,Teledyne FLIR Boson,"night/thermal contrast, low SWaP",LWIR; 640x512 or 320x256; 12 um pixel pitch; starts at 7.5 g and 600 mW; Boson+ sensitivity <=20 mK,flir_boson
+sensor_lidar_3d,sensor,3D scanning lidar,Ouster OS1,"3D geometry, SLAM, mapping",200 m max range; 45 deg vertical FOV; up to 128 channels; up to 5.2M points/s; 20 Hz max frame rate; IP68/IP69K,ouster_os1
+uav_multirotor_heavy_lift,uav,Heavy-lift multirotor,DJI Matrice 350 RTK,"hover, precise inspection, payload ecosystem",55 min max flight time; 960 g single-gimbal max payload; 23 m/s max horizontal speed; 12 m/s wind resistance; IP55,dji_matrice_350
+uav_vtol_fixed_wing,uav,VTOL fixed-wing mapper,WingtraOne GEN II,"large-area mapping, efficient survey operations",59 min max flight time; 800 g payload; 16 m/s flight speed; 12 m/s sustained wind; up to 310 ha RGB coverage or 360 ha lidar coverage,wingtraone_gen_ii
+controller_pid,controller,PID controller,Classical PID feedback loop,"simple, mature, low-compute feedback control","NI describes PID as the most common industrial control algorithm, valued for robust performance and functional simplicity",ni_pid
+controller_mpc,controller,Model predictive controller,Constrained MPC,constraint-aware optimization over a prediction horizon,MathWorks describes MPC as predicting future outputs and solving a constrained optimization problem for manipulated-variable adjustments,mathworks_mpc
