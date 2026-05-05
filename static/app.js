@@ -25,11 +25,31 @@ const ov1SaveButtonEl = document.getElementById("ov1-save");
 const ov1ResetButtonEl = document.getElementById("ov1-reset-edits");
 const ov1EditorStatusEl = document.getElementById("ov1-editor-status");
 const ov1PaletteEl = document.getElementById("ov1-palette");
+const editorTitleEl = document.getElementById("editor-title");
+const editorCopyEl = document.getElementById("editor-copy");
+const editorPaletteLabelEl = document.getElementById("editor-palette-label");
 const explorerFilterEl = document.getElementById("explorer-filter");
 const explorerTreeEl = document.getElementById("explorer-tree");
 const inspectorEl = document.getElementById("inspector");
 const overviewSvg = document.getElementById("overview");
 const analysisViewEl = document.getElementById("analysis-view");
+const workbenchEl = document.getElementById("workbench");
+const diagramPanelEl = document.getElementById("diagram-panel");
+const canvasCardEl = document.getElementById("diagram-canvas-card");
+const inspectorPanelEl = document.getElementById("inspector-panel");
+const requirementsBoardEl = document.getElementById("requirements-board");
+const requirementsSummaryEl = document.getElementById("requirements-summary");
+const requirementsSearchEl = document.getElementById("requirements-search");
+const requirementsClearEl = document.getElementById("requirements-clear");
+const requirementsListCountEl = document.getElementById("requirements-list-count");
+const requirementsListEl = document.getElementById("requirements-list");
+const requirementsDetailEl = document.getElementById("requirements-detail");
+const requirementsExplorerModalEl = document.getElementById("requirements-explorer-modal");
+const requirementsExplorerModalCardEl = document.getElementById("requirements-explorer-modal-card");
+const requirementsExplorerModalTitleEl = document.getElementById("requirements-explorer-modal-title");
+const requirementsExplorerModalSubtitleEl = document.getElementById("requirements-explorer-modal-subtitle");
+const requirementsExplorerModalContentEl = document.getElementById("requirements-explorer-modal-content");
+const requirementsExplorerModalCloseEl = document.getElementById("requirements-explorer-modal-close");
 const zoomInButton = document.getElementById("zoom-in");
 const zoomOutButton = document.getElementById("zoom-out");
 const fitViewButton = document.getElementById("fit-view");
@@ -48,6 +68,7 @@ const OVERVIEW_HEIGHT = 180;
 const OV1_CARD_WIDTH = 204;
 const OV1_CARD_HEIGHT = 138;
 const VISUALIZER_METADATA_TAG = "@sysml2-visualizer";
+const ME_VAL_RULES_SNAPSHOT = window.ME_VAL_RULES_SNAPSHOT || { source_workbook: "", rule_count: 0, sheets: [] };
 const state = {
   currentView: "ov1",
   layoutMode: "auto",
@@ -63,7 +84,9 @@ const state = {
   datasetIndex: [],
   currentModelPath: "",
   currentSourceText: "",
+  loadedSourceText: "",
   analysisPayload: null,
+  requirementsModalId: "",
   isPanning: false,
   panOrigin: null,
   pendingFocusEntityId: null,
@@ -87,12 +110,38 @@ function isTextFirstView(viewName) {
   return ["analysis", "simulation"].includes(viewName);
 }
 
+function isWorkspaceFirstView(viewName) {
+  return viewName === "requirements";
+}
+
+function isEditableDiagramView(viewName) {
+  return ["ov1", "bdd", "ibd"].includes(viewName);
+}
+
 function defaultCardSelectionId(viewName) {
   return (
     state.catalog.find((item) => item.view === viewName && item.id === `${viewName}:overall`)?.id ||
     state.catalog.find((item) => item.view === viewName)?.id ||
     null
   );
+}
+
+function defaultRequirementSelectionId() {
+  return (
+    state.catalog.find((item) => item.view === "requirements" && !item.id.includes("element:"))?.id ||
+    state.catalog.find((item) => item.view === "requirements")?.id ||
+    null
+  );
+}
+
+function defaultSelectionIdForView(viewName) {
+  if (viewName === "requirements") {
+    return defaultRequirementSelectionId();
+  }
+  if (isTextFirstView(viewName)) {
+    return defaultCardSelectionId(viewName);
+  }
+  return null;
 }
 
 function el(name, attrs = {}, text = "") {
@@ -306,6 +355,95 @@ function buildOperationalComponentPool(definitions, operationalActors) {
   return uniqueBy([...actorComponents, ...definitionComponents], (component) => component.id);
 }
 
+function bddDefinitionPool(modelData) {
+  return modelData.definitions.filter((definition) =>
+    ["part", "item", "port", "attribute", "enum", "action", "calc"].includes(definition.kind)
+  );
+}
+
+function bddBlockFromDefinition(definition, index = 0) {
+  return {
+    id: definition.id,
+    name: definition.name,
+    stereotype: `<<${definition.kind}>>`,
+    definitionKind: definition.kind,
+    properties: definition.attributes.length ? definition.attributes : definition.members.slice(0, 6),
+    operations: definition.operations,
+    ...gridPosition(index),
+    width: 210
+  };
+}
+
+function bddBlockHeight(block) {
+  const propertyCount = (block.properties || []).length;
+  const operationCount = state.detailMode === "compact" ? 0 : (block.operations || []).length;
+  const visibleProperties = state.detailMode === "full" ? propertyCount : Math.min(propertyCount, state.detailMode === "compact" ? 2 : 4);
+  const visibleOperations = state.detailMode === "full" ? operationCount : Math.min(operationCount, state.detailMode === "compact" ? 0 : 2);
+  const hiddenProperties = Math.max(0, propertyCount - visibleProperties);
+  const hiddenOperations = Math.max(0, operationCount - visibleOperations);
+  return Math.max(118, 78 + visibleProperties * 18 + visibleOperations * 18 + (hiddenProperties || hiddenOperations ? 18 : 0));
+}
+
+function buildBddComponentPool(modelData) {
+  return bddDefinitionPool(modelData).map((definition, index) => ({
+    ...bddBlockFromDefinition(definition, index),
+    paletteTitle: definition.name,
+    paletteMeta: `<<${definition.kind}>> • ${(definition.attributes.length ? definition.attributes : definition.members).length || 0} members`
+  }));
+}
+
+function buildIbdPartFromSource(part, definition, index = 0) {
+  const column = index % 3;
+  const row = Math.floor(index / 3);
+  const shape = {
+    x: 80 + column * 270,
+    y: 70 + row * 170,
+    width: 190,
+    height: 100
+  };
+  const ports = (definition?.ports || []).slice(0, 6).map((port, portIndex) => {
+    const portCycle = [
+      { side: "right", offset: 30 },
+      { side: "left", offset: 30 },
+      { side: "bottom", offset: 70 },
+      { side: "top", offset: 70 },
+      { side: "right", offset: 70 },
+      { side: "left", offset: 70 }
+    ];
+    const selected = portCycle[portIndex] || { side: "right", offset: 50 };
+    return { id: `${part.name}.${port.name}`, name: port.name, side: selected.side, offset: selected.offset };
+  });
+  return {
+    id: part.name,
+    instanceName: part.name,
+    typeName: part.type,
+    name: `${part.name}: ${part.type}`,
+    ...shape,
+    ports
+  };
+}
+
+function buildIbdComponentPool(modelData, contextPart = null) {
+  const definitionLookup = new Map(modelData.definitions.map((definition) => [definition.name, definition]));
+  const sourceParts = contextPart?.parts?.length
+    ? contextPart.parts
+    : modelData.definitions
+        .filter((definition) => definition.kind === "part" && definition.name !== contextPart?.name)
+        .slice(0, 12)
+        .map((definition) => ({ name: definition.id, type: definition.name }));
+  return sourceParts.map((part, index) => {
+    const definition =
+      definitionLookup.get(part.type) ||
+      modelData.definitions.find((entry) => entry.id === part.name || entry.name === part.type) ||
+      null;
+    return {
+      ...buildIbdPartFromSource(part, definition, index),
+      paletteTitle: `${part.name}: ${part.type}`,
+      paletteMeta: `${(definition?.ports || []).length || 0} ports`
+    };
+  });
+}
+
 function applyOv1Metadata(baseActors, baseFlows, componentPool, metadata) {
   const ov1Metadata = metadata?.ov1 || {};
   const componentLookup = Object.fromEntries(componentPool.map((component) => [component.id, component]));
@@ -341,9 +479,69 @@ function applyOv1Metadata(baseActors, baseFlows, componentPool, metadata) {
   };
 }
 
+function applyBddMetadata(baseView, metadata) {
+  const bddMetadata = metadata?.bdd || {};
+  const blockLookup = new Map((baseView.componentPool || []).map((block) => [block.id, deepClone(block)]));
+  const blocks = new Map(baseView.blocks.map((block) => [block.id, { ...block }]));
+
+  (bddMetadata.blocks || []).forEach((entry) => {
+    const baseBlock = blockLookup.get(entry.id) || blocks.get(entry.id);
+    if (!baseBlock) {
+      return;
+    }
+    blocks.set(entry.id, {
+      ...baseBlock,
+      x: Number.isFinite(entry.x) ? entry.x : baseBlock.x,
+      y: Number.isFinite(entry.y) ? entry.y : baseBlock.y
+    });
+  });
+
+  return {
+    ...baseView,
+    blocks: [...blocks.values()],
+    relationships: uniqueBy(
+      [
+        ...baseView.relationships,
+        ...((bddMetadata.relationships || []).map((relationship) => ({ ...relationship })))
+      ],
+      keyForRelationship
+    )
+  };
+}
+
+function applyIbdMetadata(baseView, metadata) {
+  const ibdMetadata = metadata?.ibd || {};
+  const partLookup = new Map((baseView.componentPool || []).map((part) => [part.id, deepClone(part)]));
+  const parts = new Map(baseView.parts.map((part) => [part.id, { ...part }]));
+
+  (ibdMetadata.parts || []).forEach((entry) => {
+    const basePart = partLookup.get(entry.id) || parts.get(entry.id);
+    if (!basePart) {
+      return;
+    }
+    parts.set(entry.id, {
+      ...basePart,
+      x: Number.isFinite(entry.x) ? entry.x : basePart.x,
+      y: Number.isFinite(entry.y) ? entry.y : basePart.y
+    });
+  });
+
+  return {
+    ...baseView,
+    parts: [...parts.values()],
+    connectors: uniqueBy(
+      [
+        ...baseView.connectors,
+        ...((ibdMetadata.connectors || []).map((connector) => ({ ...connector })))
+      ],
+      keyForConnector
+    )
+  };
+}
+
 function buildVisualizerMetadataFromModel(nextModel) {
   return {
-    version: 1,
+    version: 2,
     ov1: {
       actors: nextModel.views.ov1.actors.map((actor) => ({
         id: actor.id,
@@ -358,12 +556,151 @@ function buildVisualizerMetadataFromModel(nextModel) {
         to: flow.to,
         label: flow.label || "interaction"
       }))
+    },
+    bdd: {
+      blocks: nextModel.views.bdd.blocks.map((block) => ({
+        id: block.id,
+        x: Math.round(block.x),
+        y: Math.round(block.y)
+      })),
+      relationships: nextModel.views.bdd.relationships.map((relationship) => ({
+        from: relationship.from,
+        to: relationship.to,
+        kind: relationship.kind || "association",
+        label: relationship.label || ""
+      }))
+    },
+    ibd: {
+      parts: nextModel.views.ibd.parts.map((part) => ({
+        id: part.id,
+        x: Math.round(part.x),
+        y: Math.round(part.y)
+      })),
+      connectors: nextModel.views.ibd.connectors.map((connector) => ({
+        from: connector.from,
+        to: connector.to,
+        label: connector.label || ""
+      }))
     }
   };
 }
 
+function appendStatementsToSource(sourceText, statements) {
+  const cleanStatements = statements.map((statement) => String(statement || "").trim()).filter(Boolean);
+  if (!cleanStatements.length) {
+    return sourceText;
+  }
+  const hasPackageWrapper = /\bpackage\s+('[^']+'|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\s*\{/.test(sourceText);
+  const lastBrace = hasPackageWrapper ? sourceText.lastIndexOf("}") : -1;
+  if (lastBrace === -1) {
+    return `${sourceText.trimEnd()}\n\n${cleanStatements.join("\n")}\n`;
+  }
+  return `${sourceText.slice(0, lastBrace).trimEnd()}\n\n${cleanStatements.join("\n")}\n${sourceText.slice(lastBrace)}`;
+}
+
+function insertLinesIntoNamedBlock(sourceText, name, lines, keywords = ["part def", "item def", "port def", "enum def", "attribute def", "calc def", "part"]) {
+  const cleanLines = lines.map((line) => String(line || "").trim()).filter(Boolean);
+  if (!cleanLines.length) {
+    return sourceText;
+  }
+  const block = captureNamedBlocks(sourceText, keywords).find((entry) => entry.name === name);
+  if (!block) {
+    return sourceText;
+  }
+  const insertAt = block.start + block.block.lastIndexOf("}");
+  const blockBody = extractBody(block.block).trim();
+  const insertion = `${blockBody ? "\n" : "\n"}${cleanLines.map((line) => `    ${line}`).join("\n")}\n`;
+  return `${sourceText.slice(0, insertAt)}${insertion}${sourceText.slice(insertAt)}`;
+}
+
+function keyForFlow(flow) {
+  return `${flow.from}:${flow.to}:${flow.label || ""}`;
+}
+
+function keyForRelationship(relationship) {
+  return `${relationship.from}:${relationship.to}:${relationship.label || ""}:${relationship.kind || ""}`;
+}
+
+function keyForConnector(connector) {
+  return `${connector.from}:${connector.to}:${connector.label || ""}`;
+}
+
+function applySemanticModelEdits(sourceText, nextModel) {
+  const cleanSource = stripVisualizerMetadataBlock(sourceText);
+  let workingSource = cleanSource;
+  let baselineModel = null;
+
+  try {
+    baselineModel = parseModelText(cleanSource);
+  } catch {
+    return cleanSource;
+  }
+
+  const baselineTopLevelActors = new Set((baselineModel.sourceMeta?.topLevelParts || []).map((part) => part.id));
+  const addedTopLevelActors = nextModel.views.ov1.actors
+    .filter((actor) => !baselineTopLevelActors.has(actor.id) && actor.definitionType)
+    .map((actor) => `part ${actor.id} : ${actor.definitionType};`);
+  workingSource = appendStatementsToSource(workingSource, addedTopLevelActors);
+
+  const baselineFlows = new Set((baselineModel.views.ov1.flows || []).map(keyForFlow));
+  const addedFlows = nextModel.views.ov1.flows
+    .filter((flow) => !baselineFlows.has(keyForFlow(flow)))
+    .map((flow) => `flow ${flow.from} -> ${flow.to}${flow.label ? ` "${flow.label}"` : ""};`);
+  workingSource = appendStatementsToSource(workingSource, addedFlows);
+
+  const definitionById = new Map((nextModel.modelData?.definitions || []).map((definition) => [definition.id, definition]));
+  const baselineRelationships = new Set((baselineModel.views.bdd.relationships || []).map(keyForRelationship));
+  nextModel.views.bdd.relationships
+    .filter((relationship) => !baselineRelationships.has(keyForRelationship(relationship)))
+    .forEach((relationship) => {
+      const sourceDefinition = definitionById.get(relationship.from);
+      const targetDefinition = definitionById.get(relationship.to);
+      if (!sourceDefinition || !targetDefinition) {
+        return;
+      }
+      const memberName = sanitizeIdentifier(relationship.label || targetDefinition.name, "member");
+      const statement =
+        relationship.kind === "association"
+          ? `port ${memberName} : ${targetDefinition.name};`
+          : `part ${memberName} : ${targetDefinition.name};`;
+      workingSource = insertLinesIntoNamedBlock(workingSource, sourceDefinition.name, [statement]);
+    });
+
+  const contextPartName = nextModel.views.ibd.frame?.contextName || baselineModel.views.ibd.frame?.contextName || "";
+  const baselinePartIds = new Set((baselineModel.views.ibd.parts || []).map((part) => part.id));
+  if (contextPartName) {
+    nextModel.views.ibd.parts
+      .filter((part) => !baselinePartIds.has(part.id) && part.typeName)
+      .forEach((part) => {
+        workingSource = insertLinesIntoNamedBlock(
+          workingSource,
+          contextPartName,
+          [`part ${part.instanceName || part.id} : ${part.typeName};`],
+          ["part def", "part"]
+        );
+      });
+  }
+
+  const baselineConnectors = new Set((baselineModel.views.ibd.connectors || []).map(keyForConnector));
+  if (contextPartName) {
+    nextModel.views.ibd.connectors
+      .filter((connector) => !baselineConnectors.has(keyForConnector(connector)))
+      .forEach((connector) => {
+        workingSource = insertLinesIntoNamedBlock(
+          workingSource,
+          contextPartName,
+          [`connect ${connector.from} -> ${connector.to}${connector.label ? ` "${connector.label}"` : ""};`],
+          ["part def", "part"]
+        );
+      });
+  }
+
+  return workingSource;
+}
+
 function buildSourceTextWithVisualizerState(sourceText = state.currentSourceText || modelTextEl.value) {
-  return serializeVisualizerMetadata(sourceText, buildVisualizerMetadataFromModel(model));
+  const semanticSource = applySemanticModelEdits(sourceText, model);
+  return serializeVisualizerMetadata(semanticSource, buildVisualizerMetadataFromModel(model));
 }
 
 function positionOperationalActors(parts) {
@@ -627,18 +964,9 @@ function gridPosition(index) {
 }
 
 function buildBDD(modelData) {
-  const definitionPool = modelData.definitions.filter((definition) =>
-    ["part", "item", "port", "attribute", "enum", "action", "calc"].includes(definition.kind)
-  );
-  const blocks = definitionPool.slice(0, 12).map((definition, index) => ({
-    id: definition.id,
-    name: definition.name,
-    stereotype: `<<${definition.kind}>>`,
-    properties: definition.attributes.length ? definition.attributes : definition.members.slice(0, 6),
-    operations: definition.operations,
-    ...gridPosition(index),
-    width: 210
-  }));
+  const definitionPool = bddDefinitionPool(modelData);
+  const componentPool = buildBddComponentPool(modelData);
+  const blocks = componentPool.slice(0, 12).map((block) => ({ ...block }));
 
   const relationships = [];
   definitionPool.forEach((definition) => {
@@ -669,6 +997,7 @@ function buildBDD(modelData) {
   return {
     title: "Block Definition Diagram",
     blocks,
+    componentPool,
     relationships: uniqueBy(relationships, (rel) => `${rel.from}:${rel.to}:${rel.label}:${rel.kind}`)
   };
 }
@@ -683,6 +1012,7 @@ function chooseContextPart(modelData) {
 
 function buildIBD(modelData) {
   const contextPart = chooseContextPart(modelData);
+  const componentPool = buildIbdComponentPool(modelData, contextPart);
   if (!contextPart) {
     const fallbackActors = modelData.operationalActors.length
       ? modelData.operationalActors
@@ -702,8 +1032,9 @@ function buildIBD(modelData) {
     }));
     return {
       title: "Internal Block Diagram",
-      frame: { name: "System Context : System Context" },
+      frame: { name: "System Context : System Context", contextName: "" },
       parts: fallbackParts,
+      componentPool,
       connectors: fallbackParts.slice(0, -1).map((part, index) => ({
         from: `${part.id}.port`,
         to: `${fallbackParts[index + 1].id}.port`,
@@ -721,32 +1052,7 @@ function buildIBD(modelData) {
 
   const parts = sourceParts.map((part, index) => {
     const definition = modelData.definitions.find((entry) => entry.name === part.type || entry.id === part.name);
-    const column = index % 3;
-    const row = Math.floor(index / 3);
-    const shape = {
-      x: 80 + column * 270,
-      y: 70 + row * 170,
-      width: 190,
-      height: 100
-    };
-    const ports = (definition?.ports || []).slice(0, 6).map((port, portIndex) => {
-      const portCycle = [
-        { side: "right", offset: 30 },
-        { side: "left", offset: 30 },
-        { side: "bottom", offset: 70 },
-        { side: "top", offset: 70 },
-        { side: "right", offset: 70 },
-        { side: "left", offset: 70 }
-      ];
-      const selected = portCycle[portIndex] || { side: "right", offset: 50 };
-      return { id: `${part.name}.${port.name}`, name: port.name, side: selected.side, offset: selected.offset };
-    });
-    return {
-      id: part.name,
-      name: `${part.name}: ${part.type}`,
-      ...shape,
-      ports
-    };
+    return buildIbdPartFromSource(part, definition, index);
   });
 
   const connectors = contextPart.connectors.map((connector) => ({
@@ -757,8 +1063,9 @@ function buildIBD(modelData) {
 
   return {
     title: "Internal Block Diagram",
-    frame: { name: `${contextPart.name} : ${contextPart.name}` },
+    frame: { name: `${contextPart.name} : ${contextPart.name}`, contextName: contextPart.name },
     parts,
+    componentPool,
     connectors:
       contextPart.connectors.length > 0
         ? connectors
@@ -1142,6 +1449,501 @@ function buildSequence(activityView) {
   };
 }
 
+function normalizeRequirementId(value) {
+  return normalizeName(String(value || "").replace(/^<|>$/g, "").trim());
+}
+
+function requirementRecordId(kind, name, requirementId = "", parentName = "") {
+  const basis = requirementId || (parentName ? `${parentName}_${name}` : name) || kind;
+  return `${kind}:${sanitizeIdentifier(basis, kind)}`;
+}
+
+function parseRequirementHeader(headerText) {
+  const header = String(headerText || "").trim();
+  let match = header.match(
+    /^requirement\s+def\s+(?:<\s*([^>]+)\s*>\s+)?('[^']+'|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)(?:\s*:\>\s*([^{}\n]+))?$/i
+  );
+  if (match) {
+    return {
+      kind: "definition",
+      requirementId: normalizeRequirementId(match[1]),
+      name: normalizeName(match[2]),
+      baseType: cleanType(match[3] || "")
+    };
+  }
+  match = header.match(
+    /^requirement\s+(?:<\s*([^>]+)\s*>\s+)?('[^']+'|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*([^{}\n]+))?$/i
+  );
+  if (match) {
+    return {
+      kind: "requirement",
+      requirementId: normalizeRequirementId(match[1]),
+      name: normalizeName(match[2]),
+      typeName: cleanType(match[3] || "")
+    };
+  }
+  return null;
+}
+
+function normalizeTraceKind(kind) {
+  const lower = String(kind || "").toLowerCase();
+  if (lower.startsWith("refine")) {
+    return "refine";
+  }
+  if (lower.startsWith("derive")) {
+    return "derive";
+  }
+  if (lower.startsWith("verify")) {
+    return "verify";
+  }
+  if (lower.startsWith("trace")) {
+    return "trace";
+  }
+  return lower;
+}
+
+function normalizeMultilineText(value) {
+  return String(value || "")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line, index, lines) => line || (index > 0 && index < lines.length - 1))
+    .join("\n")
+    .trim();
+}
+
+function captureConstraintBodies(source) {
+  const text = String(source || "");
+  const pattern = /\brequire\s+constraint\s*\{/g;
+  const blocks = [];
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const braceIndex = text.indexOf("{", match.index);
+    const block = text.slice(match.index, braceIndex + 1) + extractBalancedBlock(text, braceIndex + 1);
+    blocks.push(block.trim());
+    pattern.lastIndex = braceIndex + 1;
+  }
+  return blocks;
+}
+
+function parseRequirementStatementSource(sourceText, parentName = "") {
+  const source = String(sourceText || "");
+  const statements = [];
+
+  parseMembers(
+    source,
+    /\brequirement\s+def\s+(?:<\s*([^>]+)\s*>\s+)?('[^']+'|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)(?:\s*:\>\s*([^;{\n]+))?\s*;/g,
+    (entry) => {
+      const name = normalizeName(entry[2]);
+      statements.push({
+        id: requirementRecordId("definition", name, normalizeRequirementId(entry[1]), parentName),
+        kind: "definition",
+        name,
+        requirementId: normalizeRequirementId(entry[1]),
+        typeName: "",
+        baseType: cleanType(entry[3] || ""),
+        parentName,
+        description: "",
+        requirementText: "",
+        subjectName: "",
+        subjectType: "",
+        constraintCount: 0,
+        requiredTargets: [],
+        traceLinks: [],
+        satisfyBy: [],
+        constraintTexts: [],
+        rawText: normalizeMultilineText(entry[0])
+      });
+      return entry[2];
+    }
+  );
+
+  parseMembers(
+    source,
+    /\brequirement\s+(?!def\b)(?:<\s*([^>]+)\s*>\s+)?('[^']+'|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*([^;{\n]+))?\s*;/g,
+    (entry) => {
+      const name = normalizeName(entry[2]);
+      statements.push({
+        id: requirementRecordId("requirement", name, normalizeRequirementId(entry[1]), parentName),
+        kind: "requirement",
+        name,
+        requirementId: normalizeRequirementId(entry[1]),
+        typeName: cleanType(entry[3] || ""),
+        baseType: "",
+        parentName,
+        description: "",
+        requirementText: "",
+        subjectName: "",
+        subjectType: "",
+        constraintCount: 0,
+        requiredTargets: [],
+        traceLinks: [],
+        satisfyBy: [],
+        constraintTexts: [],
+        rawText: normalizeMultilineText(entry[0])
+      });
+      return entry[2];
+    }
+  );
+
+  return uniqueBy(statements, (statement) => statement.id);
+}
+
+function parseRequirementBody(body, requirementName = "") {
+  const docMatch = body.match(/\bdoc\s+(?:\/\*([\s\S]*?)\*\/|"([^"]+)")/);
+  const subjectMatch = body.match(/\bsubject\s+([A-Za-z_][A-Za-z0-9_.]*)(?:\s*:\s*([^;{\n]+))?\s*;/);
+  const constraintTexts = captureConstraintBodies(body).map((block) => normalizeMultilineText(block));
+  const constraintCount = constraintTexts.length;
+  const childRequirements = [];
+  const requiredTargets = [];
+
+  parseMembers(
+    body,
+    /\brequire(?:ment)?\s+(?!constraint\b)(?:<\s*([^>]+)\s*>\s+)?([A-Za-z_][A-Za-z0-9_.]*)(?:\s*:\s*([^;{\n]+))?\s*;/g,
+    (entry) => {
+      const targetName = normalizeName(entry[2]);
+      const typeName = cleanType(entry[3] || "");
+      if (typeName || !targetName.includes(".")) {
+        childRequirements.push({
+          id: requirementRecordId("requirement", targetName, normalizeRequirementId(entry[1]), requirementName),
+          kind: "requirement",
+          name: targetName,
+          requirementId: normalizeRequirementId(entry[1]),
+          typeName,
+          baseType: "",
+          parentName: requirementName,
+          description: "",
+          requirementText: "",
+          subjectName: "",
+          subjectType: "",
+          constraintCount: 0,
+          requiredTargets: [],
+          traceLinks: [],
+          satisfyBy: [],
+          constraintTexts: [],
+          rawText: normalizeMultilineText(entry[0])
+        });
+      } else {
+        requiredTargets.push({
+          kind: "require",
+          target: targetName,
+          typeName
+        });
+      }
+      return entry[2];
+    }
+  );
+
+  const traceLinks = parseMembers(
+    body,
+    /\b(refine|refines|derive|derives|verify|verifies|trace|traces)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;/g,
+    (entry) => ({
+      kind: normalizeTraceKind(entry[1]),
+      target: normalizeName(entry[2])
+    })
+  );
+
+  const satisfyBy = parseMembers(
+    body,
+    /\bsatisfy\s+by\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;/g,
+    (entry) => normalizeName(entry[1])
+  );
+
+  return {
+    description: (docMatch?.[1] || docMatch?.[2] || "").replace(/\s+/g, " ").trim(),
+    requirementText: normalizeMultilineText(docMatch?.[1] || docMatch?.[2] || ""),
+    subjectName: normalizeName(subjectMatch?.[1] || ""),
+    subjectType: cleanType(subjectMatch?.[2] || ""),
+    constraintCount,
+    requiredTargets: uniqueBy(requiredTargets, (entry) => `${entry.kind}:${entry.target}:${entry.typeName || ""}`),
+    traceLinks: uniqueBy(traceLinks, (entry) => `${entry.kind}:${entry.target}`),
+    satisfyBy: uniqueBy(satisfyBy, (entry) => entry),
+    constraintTexts,
+    childRequirements
+  };
+}
+
+function parseRequirementBlocks(source) {
+  const pattern =
+    /\brequirement\s+(?:def\s+)?(?:<\s*[^>\n]+\s*>\s+)?(?:'[^']+'|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*(?:>|)?\s*[^;{\n]+)?\s*\{/g;
+  const blocks = [];
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    const braceIndex = source.indexOf("{", match.index);
+    const header = source.slice(match.index, braceIndex).trim();
+    const parsedHeader = parseRequirementHeader(header);
+    if (!parsedHeader) {
+      continue;
+    }
+    const block = source.slice(match.index, braceIndex + 1) + extractBalancedBlock(source, braceIndex + 1);
+    blocks.push({
+      ...parsedHeader,
+      block,
+      header,
+      body: extractBody(block),
+      start: match.index
+    });
+    pattern.lastIndex = braceIndex + 1;
+  }
+  return blocks;
+}
+
+function parseTopLevelRequirementRelations(source) {
+  return uniqueBy(
+    [
+      ...parseMembers(
+        source,
+        /\bsatisfy\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;/g,
+        (entry) => ({
+          kind: "satisfy",
+          requirement: normalizeName(entry[1]),
+          source: normalizeName(entry[2])
+        })
+      ),
+      ...parseMembers(
+        source,
+        /\bsatisfy\s+([A-Za-z_][A-Za-z0-9_.]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;/g,
+        (entry) => ({
+          kind: "satisfy",
+          requirement: normalizeName(entry[2]),
+          source: normalizeName(entry[1])
+        })
+      )
+    ],
+    (entry) => `${entry.kind}:${entry.requirement}:${entry.source}`
+  );
+}
+
+function buildRequirementElementNode(token, index = 0) {
+  const path = normalizeName(token);
+  const label = path.includes(".") ? path : titleFromIdentifier(path);
+  return {
+    id: `element:${sanitizeIdentifier(path, `element${index + 1}`)}`,
+    label,
+    fullPath: path,
+    kind: "System Element",
+    category: "element",
+    description: "",
+    requirementId: "",
+    name: path,
+    typeName: "",
+    baseType: "",
+    parentName: "",
+    requirementText: "",
+    subjectName: "",
+    subjectType: "",
+    constraintCount: 0,
+    requiredTargets: [],
+    traceLinks: [],
+    satisfyBy: [],
+    constraintTexts: [],
+    rawText: "",
+    width: 240,
+    height: 84
+  };
+}
+
+function buildRequirementsView(modelData) {
+  const requirements = modelData.requirements || [];
+  if (!requirements.length) {
+    return {
+      title: "Requirements View",
+      summary: "No explicit SysML requirements were found in the current model.",
+      nodes: [],
+      links: [],
+      emptyMessage: "This SysML2 input does not currently declare any `requirement` or `requirement def` elements."
+    };
+  }
+
+  const definitionLookup = new Map(
+    requirements
+      .filter((requirement) => requirement.kind === "definition")
+      .map((requirement) => [requirement.name, requirement.id])
+  );
+  const requirementLookup = new Map(
+    requirements
+      .filter((requirement) => requirement.kind !== "definition")
+      .map((requirement) => [requirement.name, requirement.id])
+  );
+  const idLookup = new Map(
+    requirements
+      .filter((requirement) => requirement.requirementId)
+      .map((requirement) => [requirement.requirementId, requirement.id])
+  );
+  const anyRequirementLookup = new Map();
+  requirements.forEach((requirement) => {
+    if (!anyRequirementLookup.has(requirement.name)) {
+      anyRequirementLookup.set(requirement.name, requirement.id);
+    }
+    if (requirement.requirementId && !anyRequirementLookup.has(requirement.requirementId)) {
+      anyRequirementLookup.set(requirement.requirementId, requirement.id);
+    }
+  });
+
+  const resolveRequirement = (token, preferredType = "") => {
+    const normalized = normalizeName(token);
+    const preferred = cleanType(preferredType || "");
+    if (preferred && definitionLookup.has(preferred)) {
+      return definitionLookup.get(preferred);
+    }
+    return requirementLookup.get(normalized) || idLookup.get(normalized) || definitionLookup.get(normalized) || anyRequirementLookup.get(normalized) || null;
+  };
+
+  const elementTokens = new Set();
+  requirements.forEach((requirement) => {
+    if (requirement.subjectName) {
+      elementTokens.add(requirement.subjectName);
+    }
+    (requirement.satisfyBy || []).forEach((token) => elementTokens.add(token));
+    (requirement.requiredTargets || []).forEach((entry) => {
+      if (!resolveRequirement(entry.target, entry.typeName)) {
+        elementTokens.add(entry.target);
+      }
+    });
+  });
+  (modelData.requirementRelations || []).forEach((relation) => {
+    elementTokens.add(relation.source);
+  });
+  (modelData.definitions || []).forEach((definition) => {
+    (definition.satisfies || []).forEach((entry) => {
+      if (!resolveRequirement(entry.target, entry.type)) {
+        return;
+      }
+      elementTokens.add(definition.name);
+    });
+  });
+
+  const elementNodes = [...elementTokens].sort().map((token, index) => buildRequirementElementNode(token, index));
+  const elementLookup = new Map(elementNodes.map((node) => [node.fullPath, node.id]));
+
+  const nodes = [
+    ...requirements.map((requirement) => ({
+      id: requirement.id,
+      label: requirement.requirementId ? `${requirement.requirementId} ${titleFromIdentifier(requirement.name)}` : titleFromIdentifier(requirement.name),
+      shortName: titleFromIdentifier(requirement.name),
+      name: requirement.name,
+      requirementId: requirement.requirementId,
+      typeName: requirement.typeName,
+      baseType: requirement.baseType,
+      kind: requirement.kind === "definition" ? "Requirement Definition" : "Requirement",
+      category: requirement.kind === "definition" ? "definition" : "requirement",
+      description: requirement.description || "",
+      requirementText: requirement.requirementText || "",
+      subjectName: requirement.subjectName || "",
+      subjectType: requirement.subjectType || "",
+      constraintCount: requirement.constraintCount || 0,
+      parentName: requirement.parentName || "",
+      requiredTargets: requirement.requiredTargets || [],
+      traceLinks: requirement.traceLinks || [],
+      satisfyBy: requirement.satisfyBy || [],
+      constraintTexts: requirement.constraintTexts || [],
+      rawText: requirement.rawText || "",
+      width: requirement.kind === "definition" ? 280 : 300,
+      height: Math.max(100, requirement.description ? 128 : 100)
+    })),
+    ...elementNodes
+  ];
+
+  const nodeLookup = new Map(nodes.map((node) => [node.id, node]));
+  const links = [];
+  const pushLink = (from, to, kind, label = kind) => {
+    if (!nodeLookup.has(from) || !nodeLookup.has(to) || from === to) {
+      return;
+    }
+    links.push({ from, to, kind, label });
+  };
+
+  requirements.forEach((requirement) => {
+    if (requirement.typeName) {
+      const typeTarget = resolveRequirement(requirement.typeName, requirement.typeName);
+      if (typeTarget) {
+        pushLink(requirement.id, typeTarget, "type", "typed by");
+      }
+    }
+    if (requirement.baseType) {
+      const baseTarget = resolveRequirement(requirement.baseType, requirement.baseType);
+      if (baseTarget) {
+        pushLink(requirement.id, baseTarget, "specialize", "specializes");
+      }
+    }
+    if (requirement.parentName) {
+      const parentTarget = resolveRequirement(requirement.parentName);
+      if (parentTarget) {
+        pushLink(parentTarget, requirement.id, "require", "contains");
+      }
+    }
+    if (requirement.subjectName && elementLookup.has(requirement.subjectName)) {
+      pushLink(elementLookup.get(requirement.subjectName), requirement.id, "subject", "subject");
+    }
+    (requirement.requiredTargets || []).forEach((entry) => {
+      const targetId = resolveRequirement(entry.target, entry.typeName) || elementLookup.get(entry.target);
+      if (targetId) {
+        pushLink(requirement.id, targetId, "require", "requires");
+      }
+    });
+    (requirement.traceLinks || []).forEach((entry) => {
+      const targetId = resolveRequirement(entry.target);
+      if (targetId) {
+        pushLink(requirement.id, targetId, entry.kind, entry.kind);
+      }
+    });
+    (requirement.satisfyBy || []).forEach((token) => {
+      const sourceId = elementLookup.get(token);
+      if (sourceId) {
+        pushLink(sourceId, requirement.id, "satisfy", "satisfies");
+      }
+    });
+  });
+
+  (modelData.requirementRelations || []).forEach((relation) => {
+    const targetId = resolveRequirement(relation.requirement);
+    const sourceId = elementLookup.get(relation.source);
+    if (sourceId && targetId) {
+      pushLink(sourceId, targetId, relation.kind, "satisfies");
+    }
+  });
+
+  (modelData.definitions || []).forEach((definition) => {
+    const sourceId = elementLookup.get(definition.name);
+    if (!sourceId) {
+      return;
+    }
+    (definition.satisfies || []).forEach((entry) => {
+      const targetId = resolveRequirement(entry.target, entry.type);
+      if (targetId) {
+        pushLink(sourceId, targetId, "satisfy", "satisfies");
+      }
+    });
+  });
+
+  const definitionNodes = nodes.filter((node) => node.category === "definition");
+  const requirementNodes = nodes.filter((node) => node.category === "requirement");
+  const elementViewNodes = nodes.filter((node) => node.category === "element");
+  const placeColumn = (items, x, yStart = 82, rowGap = 26) => {
+    let currentY = yStart;
+    items.forEach((item) => {
+      item.x = x;
+      item.y = currentY;
+      currentY += item.height + rowGap;
+    });
+  };
+  placeColumn(definitionNodes, 72);
+  placeColumn(requirementNodes, 384);
+  placeColumn(elementViewNodes, 736, 96, 24);
+
+  const summaryParts = [
+    `${requirementNodes.length} requirement${requirementNodes.length === 1 ? "" : "s"}`,
+    `${definitionNodes.length} definition${definitionNodes.length === 1 ? "" : "s"}`,
+    `${links.filter((link) => link.kind === "satisfy").length} satisfaction link${links.filter((link) => link.kind === "satisfy").length === 1 ? "" : "s"}`
+  ];
+
+  return {
+    title: "Requirements View",
+    summary: `SysML requirement graph with definitions, requirement statements, and trace links. ${summaryParts.join(", ")}.`,
+    nodes,
+    links: uniqueBy(links, (link) => `${link.from}:${link.to}:${link.kind}:${link.label}`)
+  };
+}
+
 function captureNamedBlocks(source, keywords) {
   const pattern = new RegExp(`\\b(${keywords.join("|")})\\s+('[^']+'|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)[^\\{;]*\\{`, "g");
   const blocks = [];
@@ -1293,6 +2095,21 @@ function parsePartLikeDefinition(keyword, name, body) {
     (entry) => normalizeName(entry[1])
   );
   const performedActions = parsePerformedActions(body);
+  const satisfies = uniqueBy(
+    [
+      ...parseMembers(
+        body,
+        /\bsatisfy\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\{|;)/g,
+        (entry) => ({ target: entry[1], type: "" })
+      ),
+      ...parseMembers(
+        body,
+        /\bsatisfy\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_:]*)\s*(?:\{|;)/g,
+        (entry) => ({ target: entry[1], type: normalizeName(entry[2]) })
+      )
+    ],
+    (entry) => `${entry.target}:${entry.type}`
+  );
   const members = uniqueBy(
     [
       ...attributes,
@@ -1326,6 +2143,7 @@ function parsePartLikeDefinition(keyword, name, body) {
     parts: uniqueBy(partMembers, (part) => `${part.name}:${part.type}`),
     localActionDefinitions: uniqueBy(localActionDefinitions, (entry) => entry),
     performedActions: uniqueBy(performedActions, (entry) => `${entry.alias}:${entry.target}`),
+    satisfies,
     connectors: parseConnectors(body),
     members
   };
@@ -1460,7 +2278,39 @@ function parseSysML(text) {
   const docMatch = source.match(/\bdoc\s+(?:\/\*([\s\S]*?)\*\/|"([^"]+)")/);
   const definitions = [];
   const activityBlocks = [];
+  const requirements = [];
   let packageLevelSource = source;
+  let requirementLevelSource = source;
+
+  const requirementBlocks = parseRequirementBlocks(source);
+  requirementBlocks.forEach((entry) => {
+    requirementLevelSource = requirementLevelSource.replace(entry.block, "");
+    const parsedBody = parseRequirementBody(entry.body, entry.name);
+    requirements.push({
+      id: requirementRecordId(entry.kind, entry.name, entry.requirementId),
+      kind: entry.kind,
+      name: entry.name,
+      requirementId: entry.requirementId,
+      typeName: entry.typeName || "",
+      baseType: entry.baseType || "",
+      parentName: "",
+      description: parsedBody.description,
+      requirementText: parsedBody.requirementText,
+      subjectName: parsedBody.subjectName,
+      subjectType: parsedBody.subjectType,
+      constraintCount: parsedBody.constraintCount,
+      requiredTargets: parsedBody.requiredTargets,
+      traceLinks: parsedBody.traceLinks,
+      satisfyBy: parsedBody.satisfyBy,
+      constraintTexts: parsedBody.constraintTexts,
+      rawText: normalizeMultilineText(entry.block)
+    });
+    requirements.push(...parsedBody.childRequirements);
+  });
+
+  parseRequirementStatementSource(requirementLevelSource).forEach((entry) => {
+    requirements.push(entry);
+  });
 
   const blockEntries = captureNamedBlocks(source, ["part def", "item def", "port def", "enum def", "attribute def", "calc def", "action def", "part", "action"]);
   blockEntries.forEach((entry) => {
@@ -1639,16 +2489,28 @@ function parseSysML(text) {
     definitions,
     operationalActors,
     flows,
-    activityBlock
+    activityBlock,
+    requirements: uniqueBy(requirements, (requirement) => requirement.id),
+    requirementRelations: parseTopLevelRequirementRelations(requirementLevelSource)
   };
   const componentPool = buildOperationalComponentPool(definitions, operationalActors);
   const ov1View = applyOv1Metadata(operationalActors, flows, componentPool, metadata);
+  const bddView = applyBddMetadata(buildBDD(modelData), metadata);
+  const ibdView = applyIbdMetadata(buildIBD(modelData), metadata);
   const activityView = buildActivity(modelData, activityBlock, activityBlocks);
   const sequenceView = buildSequence(activityView);
+  const requirementsView = buildRequirementsView(modelData);
 
   return {
     title: titleFromIdentifier(packageName),
     description: (docMatch?.[1] || docMatch?.[2] || "SysML2 textual model").replace(/\s+/g, " ").trim(),
+    modelData,
+    sourceMeta: {
+      packageName,
+      contextPartName: ibdView.frame?.contextName || "",
+      topLevelParts: topLevelParts.map((part) => ({ ...part })),
+      topLevelFlows: topLevelFlows.map((flow) => ({ ...flow }))
+    },
     views: {
       ov1: {
         title: "OV-1 High-Level Operational Concept",
@@ -1657,10 +2519,11 @@ function parseSysML(text) {
         flows: ov1View.flows,
         componentPool
       },
-      bdd: buildBDD(modelData),
-      ibd: buildIBD(modelData),
+      bdd: bddView,
+      ibd: ibdView,
       activity: activityView,
-      sequence: sequenceView
+      sequence: sequenceView,
+      requirements: requirementsView
     }
   };
 }
@@ -2713,7 +3576,573 @@ function buildSimulationReadinessView(nextModel, sourcePath = "", sourceText = "
   };
 }
 
-function buildAnalysisView(nextModel, analysisPayload = null, sourcePath = "") {
+function meValComplianceScore(passedCount, failedCount) {
+  return passedCount + failedCount ? (passedCount / (passedCount + failedCount)) * 100 : null;
+}
+
+function meValCategoryDescription(sheetName) {
+  const descriptions = {
+    "Standard Modeling": "Core naming, structural hygiene, and activity-control integrity checks from the workbook's standard modeling rules.",
+    "Optional": "Optional rigor checks that strengthen typing discipline and executable-quality interfaces when those concepts are present.",
+    "Executable": "Executable-model checks focused on message semantics, signal realization, and behavior that can participate in simulation."
+  };
+  return descriptions[sheetName] || "Workbook-derived modeling checks.";
+}
+
+function flattenMeValRulesSnapshot() {
+  return (ME_VAL_RULES_SNAPSHOT.sheets || []).flatMap((sheet) =>
+    (sheet.rules || []).map((rule) => ({
+      ...rule,
+      sheet: sheet.sheet
+    }))
+  );
+}
+
+function collectActivityAdjacency(activityView) {
+  const incoming = new Map();
+  const outgoing = new Map();
+  const nodeLookup = Object.fromEntries((activityView.nodes || []).map((node) => [node.id, node]));
+  (activityView.edges || []).forEach((edge) => {
+    incoming.set(edge.to, [...(incoming.get(edge.to) || []), edge]);
+    outgoing.set(edge.from, [...(outgoing.get(edge.from) || []), edge]);
+  });
+  return { incoming, outgoing, nodeLookup };
+}
+
+function countEnumLiteralCandidates(bodyText) {
+  const cleaned = String(bodyText || "")
+    .replace(/\bdoc\s+(?:\/\*[\s\S]*?\*\/|"[^"]*")/g, " ")
+    .replace(/[{}]/g, " ");
+  return uniqueBy(
+    cleaned
+      .split(/\r?\n/)
+      .flatMap((line) => line.split(/[;,]/))
+      .map((token) => token.trim())
+      .filter((token) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(token)),
+    (token) => token
+  ).length;
+}
+
+function buildMeValContext(nextModel, sourceText = "") {
+  const source = stripVisualizerMetadataBlock(String(sourceText || ""));
+  const modelData = nextModel.modelData || { definitions: [], operationalActors: [], flows: [] };
+  const activityView = nextModel.views.activity || { nodes: [], edges: [], inputs: [], outputs: [] };
+  const bddView = nextModel.views.bdd || { blocks: [], relationships: [] };
+  const ibdView = nextModel.views.ibd || { parts: [], connectors: [] };
+  const sequenceView = nextModel.views.sequence || { participants: [], executions: [], messages: [] };
+  const { incoming, outgoing, nodeLookup } = collectActivityAdjacency(activityView);
+  const definitions = modelData.definitions || [];
+  const operations = definitions.flatMap((definition) =>
+    (definition.operations || []).map((operation) => ({
+      owner: definition.name,
+      name: String(operation || "").replace(/\(\)$/, "").trim()
+    }))
+  );
+  const attributeEntries = definitions.flatMap((definition) =>
+    (definition.attributes || []).map((attribute) => {
+      const parts = String(attribute || "").split(":");
+      return {
+        owner: definition.name,
+        name: (parts[0] || "").trim(),
+        type: parts.slice(1).join(":").trim()
+      };
+    })
+  );
+  const definitionPins = definitions.flatMap((definition) =>
+    (definition.pins || []).map((pin) => ({
+      owner: definition.name,
+      nodeId: "",
+      direction: pin.direction || "",
+      name: pin.name || "",
+      type: pin.type || "",
+      binding: pin.binding || ""
+    }))
+  );
+  const activityPinEntries = (activityView.nodes || []).flatMap((node) => [
+    ...(node.inputs || []).map((pin) => ({
+      owner: node.performer || "System",
+      nodeId: node.id,
+      direction: "in",
+      name: pin.name || "",
+      type: pin.type || "",
+      binding: pin.binding || ""
+    })),
+    ...(node.outputs || []).map((pin) => ({
+      owner: node.performer || "System",
+      nodeId: node.id,
+      direction: "out",
+      name: pin.name || "",
+      type: pin.type || "",
+      binding: pin.binding || ""
+    }))
+  ]);
+  const allPinEntries = [...definitionPins, ...activityPinEntries];
+  const candidateLabels = new Set(buildActivityActorCandidates(modelData).map((candidate) => candidate.label));
+  const connectorPairs = new Set();
+  (ibdView.connectors || []).forEach((connector) => {
+    const from = String(connector.from || "").split(".")[0];
+    const to = String(connector.to || "").split(".")[0];
+    if (from && to) {
+      connectorPairs.add(`${from}->${to}`);
+      connectorPairs.add(`${to}->${from}`);
+    }
+  });
+  const enumBlocks = captureNamedBlocks(source, ["enum def"]).map((entry) => ({
+    name: entry.name,
+    literalCount: countEnumLiteralCandidates(extractBody(entry.block))
+  }));
+  const constraintBodies = captureConstraintBodies(source).map((block) => extractBody(block).trim());
+  return {
+    source,
+    nextModel,
+    explicitActivityCount:
+      countPatternMatches(source, /\baction\s+def\b/gi) +
+      countPatternMatches(source, /^\s*action\s+[A-Za-z_][A-Za-z0-9_]*[^;\n]*\{/gm),
+    classDeclarationCount: countPatternMatches(source, /\bclass\s+[A-Za-z_][A-Za-z0-9_]*/g),
+    nestedUntypedParts: [...source.matchAll(/^\s{2,}part\s+[A-Za-z_][A-Za-z0-9_]*\s*(?:;|\{)/gm)].map((match) => match[0].trim()),
+    untypedAttributes: [...source.matchAll(/^\s{2,}(?:in|out|inout\s+)?attribute\s+[A-Za-z_][A-Za-z0-9_]*\s*;/gm)].map((match) => match[0].trim()),
+    hasNamedPackage: /\bpackage\s+('[^']+'|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\s*\{/.test(source),
+    enumBlocks,
+    constraintBodies,
+    modelData,
+    activityView,
+    bddView,
+    ibdView,
+    sequenceView,
+    definitions,
+    operations,
+    attributeEntries,
+    allPinEntries,
+    contextPart: chooseContextPart(modelData),
+    candidateLabels,
+    topLevelFlows: nextModel.sourceMeta?.topLevelFlows || [],
+    connectorPairs,
+    incoming,
+    outgoing,
+    nodeLookup
+  };
+}
+
+function meValRuleOutcome(rule, status, detail, support = "direct") {
+  return {
+    ...rule,
+    status,
+    detail,
+    support,
+    scoreValue: status === "pass" ? 100 : status === "fail" ? 0 : null
+  };
+}
+
+function evaluateMeValRule(rule, context) {
+  const controlKinds = new Set(["decision", "merge", "fork", "join", "end"]);
+  const behaviorModeled = context.explicitActivityCount > 0;
+  const decisionNodes = (context.activityView.nodes || []).filter((node) => node.kind === "decision");
+  const mergeJoinNodes = (context.activityView.nodes || []).filter((node) => ["merge", "join"].includes(node.kind));
+  const flowFinalNodes = (context.activityView.nodes || []).filter((node) => node.kind === "end");
+  const startNodes = (context.activityView.nodes || []).filter((node) => node.kind === "start");
+  const acceptNodes = (context.activityView.nodes || []).filter((node) => node.kind === "accept");
+  const messages = context.sequenceView.messages || [];
+
+  switch (rule.name) {
+    case "ACTIVITYEDGEINCOMING": {
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      const candidates = (context.activityView.nodes || []).filter((node) => controlKinds.has(node.kind));
+      if (!candidates.length) {
+        return meValRuleOutcome(rule, "not_applicable", "The activity model does not include control nodes that require incoming flows.");
+      }
+      const failing = candidates.filter((node) => (context.incoming.get(node.id) || []).length < 1);
+      return failing.length
+        ? meValRuleOutcome(rule, "fail", `${failing.map((node) => node.label).join(", ")} are missing incoming flows.`)
+        : meValRuleOutcome(rule, "pass", `${candidates.length} control nodes each have at least one incoming flow.`);
+    }
+    case "ACTIVITYNAME":
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity definition was found in the source.");
+      }
+      return String(context.activityView.title || "").trim()
+        ? meValRuleOutcome(rule, "pass", `Activity view title is "${context.activityView.title}".`)
+        : meValRuleOutcome(rule, "fail", "The parsed activity view does not expose a stable activity name.");
+    case "ACTORNAME":
+      if (!(context.nextModel.views.ov1.actors || []).length) {
+        return meValRuleOutcome(rule, "not_applicable", "No operational actors were derived for the OV-1 view.");
+      }
+      return (context.nextModel.views.ov1.actors || []).every((actor) => String(actor.label || "").trim())
+        ? meValRuleOutcome(rule, "pass", `${context.nextModel.views.ov1.actors.length} operational actors have labels.`)
+        : meValRuleOutcome(rule, "fail", "At least one derived operational actor is missing a label.");
+    case "BLOCKNAME":
+      if (!(context.bddView.blocks || []).length) {
+        return meValRuleOutcome(rule, "not_applicable", "No BDD blocks were derived from the model.");
+      }
+      return (context.bddView.blocks || []).every((block) => String(block.name || "").trim())
+        ? meValRuleOutcome(rule, "pass", `${context.bddView.blocks.length} BDD blocks have names.`)
+        : meValRuleOutcome(rule, "fail", "At least one BDD block is unnamed.");
+    case "CLASSPROHIBIT-EDIT":
+      return context.classDeclarationCount > 0
+        ? meValRuleOutcome(rule, "fail", `${context.classDeclarationCount} raw class declarations were found in the source text.`)
+        : meValRuleOutcome(rule, "pass", "No raw class declarations were detected in the source text.");
+    case "CONSTRAINTSPECIFICATION":
+      if (!context.constraintBodies.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No `require constraint` blocks were found.");
+      }
+      return context.constraintBodies.every((body) => body.trim())
+        ? meValRuleOutcome(rule, "pass", `${context.constraintBodies.length} constraint blocks include content.`)
+        : meValRuleOutcome(rule, "fail", "At least one constraint block is empty.");
+    case "CONTROLNODEINCOMING":
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      if (!mergeJoinNodes.length) {
+        return meValRuleOutcome(rule, "not_applicable", "The activity model does not include merge or join nodes.");
+      }
+      return mergeJoinNodes.every((node) => (context.incoming.get(node.id) || []).length >= 2)
+        ? meValRuleOutcome(rule, "pass", `${mergeJoinNodes.length} merge or join nodes have at least two incoming flows.`)
+        : meValRuleOutcome(
+            rule,
+            "fail",
+            `${mergeJoinNodes.filter((node) => (context.incoming.get(node.id) || []).length < 2).map((node) => node.label).join(", ")} need additional incoming flows.`
+          );
+    case "CONTROLNODEOUTGOING": {
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      const forkDecisionNodes = (context.activityView.nodes || []).filter((node) => ["fork", "decision"].includes(node.kind));
+      if (!forkDecisionNodes.length) {
+        return meValRuleOutcome(rule, "not_applicable", "The activity model does not include fork or decision nodes.");
+      }
+      return forkDecisionNodes.every((node) => (context.outgoing.get(node.id) || []).length >= 2)
+        ? meValRuleOutcome(rule, "pass", `${forkDecisionNodes.length} fork or decision nodes have at least two outgoing flows.`)
+        : meValRuleOutcome(
+            rule,
+            "fail",
+            `${forkDecisionNodes.filter((node) => (context.outgoing.get(node.id) || []).length < 2).map((node) => node.label).join(", ")} need additional outgoing flows.`
+          );
+    }
+    case "DECISIONNODENAME":
+      if (!decisionNodes.length) {
+        return meValRuleOutcome(rule, "not_applicable", "The activity model does not include decision nodes.");
+      }
+      return decisionNodes.every((node) => String(node.label || node.id || "").trim())
+        ? meValRuleOutcome(rule, "pass", `${decisionNodes.length} decision nodes have labels or identifiers.`)
+        : meValRuleOutcome(rule, "fail", "At least one decision node is unnamed.");
+    case "ENUMERATIONLITERAL":
+      if (!context.enumBlocks.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No enum definitions were found in the source text.");
+      }
+      return context.enumBlocks.every((block) => block.literalCount > 0)
+        ? meValRuleOutcome(rule, "pass", `${context.enumBlocks.length} enum definitions include one or more literal candidates.`)
+        : meValRuleOutcome(
+            rule,
+            "fail",
+            `${context.enumBlocks.filter((block) => block.literalCount < 1).map((block) => block.name).join(", ")} do not expose any literal candidates in their bodies.`,
+            "approximate"
+          );
+    case "FLOWFINALINCOMING":
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      if (!flowFinalNodes.length) {
+        return meValRuleOutcome(rule, "not_applicable", "The activity model does not include end or flow-final style nodes.");
+      }
+      return flowFinalNodes.every((node) => (context.incoming.get(node.id) || []).length >= 1)
+        ? meValRuleOutcome(rule, "pass", `${flowFinalNodes.length} end nodes have incoming flows.`)
+        : meValRuleOutcome(
+            rule,
+            "fail",
+            `${flowFinalNodes.filter((node) => (context.incoming.get(node.id) || []).length < 1).map((node) => node.label).join(", ")} do not have incoming flows.`
+          );
+    case "MERGEJOINOUTGOING":
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      if (!mergeJoinNodes.length) {
+        return meValRuleOutcome(rule, "not_applicable", "The activity model does not include merge or join nodes.");
+      }
+      return mergeJoinNodes.every((node) => (context.outgoing.get(node.id) || []).length === 1)
+        ? meValRuleOutcome(rule, "pass", `${mergeJoinNodes.length} merge or join nodes each have exactly one outgoing flow.`)
+        : meValRuleOutcome(
+            rule,
+            "fail",
+            `${mergeJoinNodes.filter((node) => (context.outgoing.get(node.id) || []).length !== 1).map((node) => node.label).join(", ")} do not have exactly one outgoing flow.`
+          );
+    case "OPERATIONNAME":
+      if (!context.operations.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No operations were parsed from the model.");
+      }
+      return context.operations.every((operation) => String(operation.name || "").trim())
+        ? meValRuleOutcome(rule, "pass", `${context.operations.length} operations have names.`)
+        : meValRuleOutcome(rule, "fail", "At least one parsed operation is unnamed.");
+    case "PACKAGENAME":
+      return context.hasNamedPackage
+        ? meValRuleOutcome(rule, "pass", `Package "${context.nextModel.sourceMeta?.packageName || context.nextModel.title}" is named.`)
+        : meValRuleOutcome(rule, "fail", "The source text does not declare a named package.");
+    case "SIGNALEVENTSIGNAL":
+      if (!acceptNodes.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No accept-event nodes were parsed from the activity model.");
+      }
+      return acceptNodes.every((node) => String(node.eventType || "").trim())
+        ? meValRuleOutcome(rule, "pass", `${acceptNodes.length} accept-event nodes declare an event type.`)
+        : meValRuleOutcome(rule, "fail", `${acceptNodes.filter((node) => !String(node.eventType || "").trim()).map((node) => node.label).join(", ")} do not declare an event type.`);
+    case "ACTIVITYEDGEGUARD": {
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      if (!decisionNodes.length) {
+        return meValRuleOutcome(rule, "not_applicable", "The activity model does not include decision nodes.");
+      }
+      const guardFailures = decisionNodes.filter((node) => {
+        const outgoingEdges = context.outgoing.get(node.id) || [];
+        return outgoingEdges.length > 0 && outgoingEdges.some((edge) => !String(edge.controlLabel || edge.label || "").trim());
+      });
+      return guardFailures.length
+        ? meValRuleOutcome(rule, "fail", `${guardFailures.map((node) => node.label).join(", ")} have decision exits without labels or guard-like text.`, "approximate")
+        : meValRuleOutcome(rule, "pass", `${decisionNodes.length} decision nodes have labels on their outgoing flows.`, "approximate");
+    }
+    case "ACTIVITYFINAL":
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      return flowFinalNodes.length >= 1
+        ? meValRuleOutcome(rule, "pass", `${flowFinalNodes.length} final or end nodes were found.`)
+        : meValRuleOutcome(rule, "fail", "The activity model does not expose a final or end node.");
+    case "ACTIVITYINITIAL":
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      if (!startNodes.length) {
+        return meValRuleOutcome(rule, "fail", "The activity model does not expose an initial or start node.");
+      }
+      if (startNodes.length !== 1) {
+        return meValRuleOutcome(rule, "fail", `Expected one start node but found ${startNodes.length}.`);
+      }
+      return (context.outgoing.get(startNodes[0].id) || []).length >= 1
+        ? meValRuleOutcome(rule, "pass", `Start node "${startNodes[0].label}" has an outgoing flow.`)
+        : meValRuleOutcome(rule, "fail", `Start node "${startNodes[0].label}" does not have an outgoing flow.`);
+    case "CONTEXTPARTS":
+      if (!context.definitions.some((definition) => definition.kind === "part")) {
+        return meValRuleOutcome(rule, "not_applicable", "No part definitions were parsed from the model.");
+      }
+      return context.contextPart && (context.contextPart.parts || []).length >= 1
+        ? meValRuleOutcome(rule, "pass", `Context block "${context.contextPart.name}" owns ${(context.contextPart.parts || []).length} part properties.`)
+        : meValRuleOutcome(rule, "fail", "No context-style block with owned part properties could be found.");
+    case "FLOWCONNECTOR":
+      if (!context.topLevelFlows.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No top-level operational flows were found in the source.");
+      }
+      const unmatchedFlows = context.topLevelFlows.filter((flow) => !context.connectorPairs.has(`${flow.from}->${flow.to}`));
+      return unmatchedFlows.length
+        ? meValRuleOutcome(
+            rule,
+            "fail",
+            `${unmatchedFlows.map((flow) => `${flow.from}->${flow.to}`).join(", ")} are not realized by IBD connectors.`,
+            "approximate"
+          )
+        : meValRuleOutcome(rule, "pass", `${context.topLevelFlows.length} top-level flows are represented by IBD connectors.`, "approximate");
+    case "GUARDSOURCE": {
+      const guardedEdges = (context.activityView.edges || []).filter((edge) => String(edge.controlLabel || "").trim());
+      if (!guardedEdges.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No guarded control flows were found.");
+      }
+      const invalid = guardedEdges.filter((edge) => context.nodeLookup[edge.from]?.kind !== "decision");
+      return invalid.length
+        ? meValRuleOutcome(rule, "fail", `${invalid.map((edge) => `${edge.from}->${edge.to}`).join(", ")} carry guard text but do not originate from decision nodes.`)
+        : meValRuleOutcome(rule, "pass", `${guardedEdges.length} guarded flows originate from decision nodes.`);
+    }
+    case "INPINCONN": {
+      const actionableInputs = (context.activityView.nodes || []).flatMap((node) =>
+        (node.inputs || []).map((input) => ({ node, input }))
+      );
+      if (!actionableInputs.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No activity input pins were parsed from the model.");
+      }
+      const failing = actionableInputs.filter(({ node, input }) => !String(input.binding || "").trim() && !(context.incoming.get(node.id) || []).length);
+      return failing.length
+        ? meValRuleOutcome(rule, "fail", `${failing.map(({ node, input }) => `${node.label}.${input.name}`).join(", ")} are missing incoming object-flow evidence.`, "approximate")
+        : meValRuleOutcome(rule, "pass", `${actionableInputs.length} activity input pins have bindings or incoming flows.`, "approximate");
+    }
+    case "LIFELINETYPE": {
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      const participants = (context.sequenceView.participants || []).filter(
+        (participant) => !["System", "External"].includes(participant.id)
+      );
+      if (!participants.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No non-generic lifelines were derived for the sequence view.");
+      }
+      const failing = participants.filter((participant) => !context.candidateLabels.has(participant.label));
+      return failing.length
+        ? meValRuleOutcome(rule, "fail", `${failing.map((participant) => participant.label).join(", ")} do not map back to derived block-typed performers.`, "approximate")
+        : meValRuleOutcome(rule, "pass", `${participants.length} lifelines map back to derived block or part performers.`, "approximate");
+    }
+    case "OPOWNER":
+      if (!context.operations.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No operations were parsed from the model.");
+      }
+      return meValRuleOutcome(rule, "pass", `${context.operations.length} parsed operations are owned by blocks or action-bearing definitions.`);
+    case "OUTPINCONN": {
+      const actionableOutputs = (context.activityView.nodes || []).flatMap((node) =>
+        (node.outputs || []).map((output) => ({ node, output }))
+      );
+      if (!actionableOutputs.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No activity output pins were parsed from the model.");
+      }
+      const failing = actionableOutputs.filter(({ node }) => !(context.outgoing.get(node.id) || []).length);
+      return failing.length
+        ? meValRuleOutcome(rule, "fail", `${failing.map(({ node, output }) => `${node.label}.${output.name}`).join(", ")} are missing outgoing object-flow evidence.`, "approximate")
+        : meValRuleOutcome(rule, "pass", `${actionableOutputs.length} activity output pins have outgoing flows.`, "approximate");
+    }
+    case "PARTTYPE":
+      if (context.nestedUntypedParts.length) {
+        return meValRuleOutcome(rule, "fail", `${context.nestedUntypedParts.length} nested part declarations appear to be missing explicit types.`, "approximate");
+      }
+      return context.definitions.some((definition) => (definition.parts || []).length)
+        ? meValRuleOutcome(rule, "pass", `${context.definitions.reduce((sum, definition) => sum + (definition.parts || []).length, 0)} nested part properties were parsed with types.`, "approximate")
+        : meValRuleOutcome(rule, "not_applicable", "No nested part properties were found in the source text.");
+    case "PINTYPE": {
+      if (!context.allPinEntries.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No pins were parsed from definitions or activities.");
+      }
+      const failing = context.allPinEntries.filter((pin) => !String(pin.type || "").trim());
+      return failing.length
+        ? meValRuleOutcome(rule, "fail", `${failing.length} pins are missing explicit types in the parsed subset.`, "approximate")
+        : meValRuleOutcome(rule, "pass", `${context.allPinEntries.length} parsed pins declare explicit types.`, "approximate");
+    }
+    case "VALUETYPE":
+      if (context.untypedAttributes.length) {
+        return meValRuleOutcome(rule, "fail", `${context.untypedAttributes.length} attribute declarations appear to be missing types.`, "approximate");
+      }
+      return context.attributeEntries.length
+        ? meValRuleOutcome(rule, "pass", `${context.attributeEntries.length} parsed attributes declare explicit types.`, "approximate")
+        : meValRuleOutcome(rule, "not_applicable", "No typed attribute declarations were found.");
+    case "ACTPARTYPE": {
+      const activityPins = [...(context.activityView.inputs || []), ...(context.activityView.outputs || [])];
+      if (!activityPins.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No activity parameter pins were found.");
+      }
+      const failing = activityPins.filter((pin) => !String(pin.type || "").trim());
+      return failing.length
+        ? meValRuleOutcome(rule, "fail", `${failing.length} activity parameter pins are missing explicit types.`, "approximate")
+        : meValRuleOutcome(rule, "pass", `${activityPins.length} activity parameter pins declare explicit types.`, "approximate");
+    }
+    case "MESSAGESIGNATURE":
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      if (!messages.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No sequence messages were generated from the model.");
+      }
+      return messages.every((message) => String(message.label || "").trim())
+        ? meValRuleOutcome(rule, "pass", `${messages.length} generated sequence messages carry labels or signatures.`, "approximate")
+        : meValRuleOutcome(rule, "fail", "At least one generated sequence message is unlabeled.", "approximate");
+    case "MESSAGEFLOWNEEDED":
+      if (!behaviorModeled) {
+        return meValRuleOutcome(rule, "not_applicable", "No explicit activity model was parsed from the source.");
+      }
+      if (!messages.length) {
+        return meValRuleOutcome(rule, "not_applicable", "No sequence messages were generated from the model.");
+      }
+      return (context.ibdView.connectors || []).length || (context.activityView.edges || []).some((edge) => String(edge.dataLabel || "").trim())
+        ? meValRuleOutcome(rule, "pass", "Sequence messages are backed by connectors or typed activity data flows.", "approximate")
+        : meValRuleOutcome(rule, "fail", "Sequence messages were generated without connector or typed data-flow evidence.", "approximate");
+    default:
+      return meValRuleOutcome(rule, "unsupported", "This workbook rule depends on concepts the current SysML2 parser does not yet model.");
+  }
+}
+
+function evaluateMeValRules(nextModel, sourceText = "") {
+  const rules = flattenMeValRulesSnapshot();
+  const context = buildMeValContext(nextModel, sourceText);
+  const evaluations = rules.map((rule) => evaluateMeValRule(rule, context));
+  const categories = (ME_VAL_RULES_SNAPSHOT.sheets || []).map((sheet) => {
+    const sheetRules = evaluations.filter((evaluation) => evaluation.sheet === sheet.sheet);
+    const supported = sheetRules.filter((evaluation) => evaluation.status !== "unsupported");
+    const direct = supported.filter((evaluation) => evaluation.support === "direct");
+    const approximate = supported.filter((evaluation) => evaluation.support === "approximate");
+    const passed = supported.filter((evaluation) => evaluation.status === "pass");
+    const failed = supported.filter((evaluation) => evaluation.status === "fail");
+    const notApplicable = supported.filter((evaluation) => evaluation.status === "not_applicable");
+    const unsupported = sheetRules.filter((evaluation) => evaluation.status === "unsupported");
+    return {
+      sheet: sheet.sheet,
+      totalRules: sheetRules.length,
+      supportedRules: supported.length,
+      directRules: direct.length,
+      approximateRules: approximate.length,
+      passedRules: passed,
+      failedRules: failed,
+      notApplicableRules: notApplicable,
+      unsupportedRules: unsupported,
+      score: meValComplianceScore(passed.length, failed.length),
+      coverageScore: sheetRules.length ? (supported.length / sheetRules.length) * 100 : null
+    };
+  });
+  const supportedRules = evaluations.filter((evaluation) => evaluation.status !== "unsupported");
+  const directRules = supportedRules.filter((evaluation) => evaluation.support === "direct");
+  const approximateRules = supportedRules.filter((evaluation) => evaluation.support === "approximate");
+  const passedRules = supportedRules.filter((evaluation) => evaluation.status === "pass");
+  const failedRules = supportedRules.filter((evaluation) => evaluation.status === "fail");
+  const notApplicableRules = supportedRules.filter((evaluation) => evaluation.status === "not_applicable");
+  const unsupportedRules = evaluations.filter((evaluation) => evaluation.status === "unsupported");
+  return {
+    sourceWorkbook: ME_VAL_RULES_SNAPSHOT.source_workbook || "",
+    totalRules: evaluations.length,
+    supportedRules: supportedRules.length,
+    directRules: directRules.length,
+    approximateRules: approximateRules.length,
+    passedRules,
+    failedRules,
+    notApplicableRules,
+    unsupportedRules,
+    complianceScore: meValComplianceScore(passedRules.length, failedRules.length),
+    coverageScore: evaluations.length ? (supportedRules.length / evaluations.length) * 100 : null,
+    categories,
+    evaluations
+  };
+}
+
+function buildMeValCategoryCard(category) {
+  const passedNames = category.passedRules.map((rule) => rule.name);
+  const failedNames = category.failedRules.map((rule) => rule.name);
+  const unsupportedNames = category.unsupportedRules.map((rule) => rule.name);
+  const body = `${meValCategoryDescription(category.sheet)} Supported ${category.supportedRules} of ${category.totalRules} workbook rules for this ruleset, with ${category.passedRules.length} passing and ${category.failedRules.length} failing on the current model.`;
+  let rationale = "";
+  if (category.failedRules.length) {
+    rationale = `The main issues are ${formatSeries(category.failedRules.slice(0, 3).map((rule) => rule.name))}.`;
+  } else if (category.passedRules.length) {
+    rationale = `The strongest passes are ${formatSeries(category.passedRules.slice(0, 3).map((rule) => rule.name))}.`;
+  } else if (category.notApplicableRules.length) {
+    rationale = "The model does not currently expose many of the concepts this ruleset evaluates.";
+  } else {
+    rationale = "This ruleset is largely outside the observable scope of the current parser.";
+  }
+  return buildAnalysisCard({
+    id: `analysis:meval:${sanitizeIdentifier(category.sheet, "ruleset")}`,
+    title: category.sheet,
+    kind: "ME VAL Ruleset",
+    scoreText: formatPercentScore(category.score),
+    scoreValue: category.score,
+    body,
+    rationale,
+    detailRows: compactDetailRows([
+      ["Total Rules", String(category.totalRules)],
+      ["Supported Here", String(category.supportedRules)],
+      ["Direct Checks", String(category.directRules)],
+      ["Approximate Checks", String(category.approximateRules)],
+      ["Passed", String(category.passedRules.length)],
+      ["Failed", String(category.failedRules.length)],
+      ["Not Applicable", String(category.notApplicableRules.length)],
+      ["Unsupported", String(category.unsupportedRules.length)]
+    ]),
+    matchedTerms: passedNames,
+    missingTerms: failedNames.length ? failedNames : unsupportedNames,
+    matchedLabel: "Passing rules",
+    missingLabel: failedNames.length ? "Failing rules" : "Unsupported rules"
+  });
+}
+
+function buildAnalysisView(nextModel, analysisPayload = null, sourcePath = "", sourceText = "") {
   const scoreRow = analysisPayload?.score || null;
   const meta = analysisPayload?.meta || {};
   const intentText = String(analysisPayload?.intent_text || "").trim();
@@ -2727,6 +4156,7 @@ function buildAnalysisView(nextModel, analysisPayload = null, sourcePath = "") {
   const parseStatus = scoreRow?.parse_status || (scoreRow ? "ok" : "not_scored");
   const narrative = summarizeModelNarrative(nextModel);
   const sequenceValidity = evaluateSequenceValidity(nextModel);
+  const meValEvaluation = evaluateMeValRules(nextModel, sourceText);
   const actionableSteps = nextModel.views.activity.nodes.filter((node) => ["action", "accept"].includes(node.kind)).length;
   const labeledFlows = nextModel.views.activity.edges.filter((edge) => edge.label).length;
   const cards = [
@@ -2839,6 +4269,61 @@ function buildAnalysisView(nextModel, analysisPayload = null, sourcePath = "") {
     })
   );
 
+  cards.push(
+    buildAnalysisCard({
+      id: "analysis:meval-overall",
+      title: "ME VAL Modeling Rules",
+      kind: "Standards Compliance",
+      scoreText: formatPercentScore(meValEvaluation.complianceScore),
+      scoreValue: meValEvaluation.complianceScore,
+      body: `Loaded ${meValEvaluation.totalRules} workbook rules from ${ME_VAL_RULES_SNAPSHOT.sheets?.length || 0} sheets. The current visualizer can assess ${meValEvaluation.supportedRules} rules from parsed SysML2 text, with ${meValEvaluation.passedRules.length} passing and ${meValEvaluation.failedRules.length} failing on this model.`,
+      rationale: meValEvaluation.failedRules.length
+        ? `The main failing checks are ${formatSeries(meValEvaluation.failedRules.slice(0, 4).map((rule) => rule.name))}.`
+        : meValEvaluation.supportedRules
+          ? "No supported ME VAL checks are currently failing on this model."
+          : "The current parser does not yet observe enough of the workbook's concepts to score these checks.",
+      detailRows: compactDetailRows([
+        ["Workbook Rules", String(meValEvaluation.totalRules)],
+        ["Supported Here", String(meValEvaluation.supportedRules)],
+        ["Direct Checks", String(meValEvaluation.directRules)],
+        ["Approximate Checks", String(meValEvaluation.approximateRules)],
+        ["Passed", String(meValEvaluation.passedRules.length)],
+        ["Failed", String(meValEvaluation.failedRules.length)],
+        ["Not Applicable", String(meValEvaluation.notApplicableRules.length)],
+        ["Unsupported", String(meValEvaluation.unsupportedRules.length)]
+      ]),
+      matchedTerms: meValEvaluation.passedRules.map((rule) => rule.name),
+      missingTerms: meValEvaluation.failedRules.map((rule) => rule.name),
+      matchedLabel: "Passing rules",
+      missingLabel: "Failing rules",
+      wide: true
+    }),
+    buildAnalysisCard({
+      id: "analysis:meval-coverage",
+      title: "ME VAL Coverage",
+      kind: "Rules Coverage",
+      scoreText: formatPercentScore(meValEvaluation.coverageScore),
+      scoreValue: meValEvaluation.coverageScore,
+      body: "How much of the ME VAL workbook the current visualizer can actually inspect from this SysML2 parser and derived views.",
+      rationale: meValEvaluation.unsupportedRules.length
+        ? `Unsupported checks are dominated by concepts such as ${formatSeries(uniqueBy(meValEvaluation.unsupportedRules.map((rule) => rule.name), (value) => value).slice(0, 4))}.`
+        : "Every workbook rule is observable through the current parser.",
+      detailRows: compactDetailRows([
+        ["Coverage", formatPercentScore(meValEvaluation.coverageScore, "Not available")],
+        ["Supported Rules", `${meValEvaluation.supportedRules}/${meValEvaluation.totalRules}`],
+        ["Direct Checks", String(meValEvaluation.directRules)],
+        ["Approximate Checks", String(meValEvaluation.approximateRules)],
+        ["Unsupported Checks", String(meValEvaluation.unsupportedRules.length)]
+      ]),
+      matchedTerms: meValEvaluation.categories.filter((category) => category.supportedRules > 0).map((category) => category.sheet),
+      missingTerms: meValEvaluation.unsupportedRules.map((rule) => rule.name),
+      matchedLabel: "Covered rulesets",
+      missingLabel: "Unsupported rules",
+      wide: true
+    }),
+    ...meValEvaluation.categories.map((category) => buildMeValCategoryCard(category))
+  );
+
   if (scoreRow) {
     cards.push(
       buildAnalysisCard({
@@ -2906,6 +4391,20 @@ function buildAnalysisView(nextModel, analysisPayload = null, sourcePath = "") {
       valueText: sequenceValidity.scoreText,
       scoreValue: sequenceValidity.score,
       copy: sequenceValidity.metricCopy
+    },
+    {
+      id: "analysis:meval-overall",
+      label: "ME-VAL Checks",
+      valueText: formatPercentScore(meValEvaluation.complianceScore),
+      scoreValue: meValEvaluation.complianceScore,
+      copy: `${meValEvaluation.passedRules.length} pass, ${meValEvaluation.failedRules.length} fail`
+    },
+    {
+      id: "analysis:meval-coverage",
+      label: "Rule Coverage",
+      valueText: formatPercentScore(meValEvaluation.coverageScore),
+      scoreValue: meValEvaluation.coverageScore,
+      copy: `${meValEvaluation.supportedRules}/${meValEvaluation.totalRules} workbook rules observable`
     }
   ];
 
@@ -2925,16 +4424,30 @@ function buildAnalysisView(nextModel, analysisPayload = null, sourcePath = "") {
     }
   }
 
+  if (cards.some((card) => card.id === "analysis:meval-overall")) {
+    links.push({ from: "analysis:model", to: "analysis:meval-overall", label: "checked by" });
+    if (cards.some((card) => card.id === "analysis:meval-coverage")) {
+      links.push({ from: "analysis:meval-overall", to: "analysis:meval-coverage", label: "scoped by" });
+    }
+    meValEvaluation.categories.forEach((category) => {
+      links.push({
+        from: "analysis:meval-overall",
+        to: `analysis:meval:${sanitizeIdentifier(category.sheet, "ruleset")}`,
+        label: "includes"
+      });
+    });
+  }
+
   return {
     title: "Model Analysis",
     summary: scoreRow
-      ? "Narrative similarity analysis against the companion TXT description, with rationale for the overall, dimension, and sequence-diagram scores."
-      : "Generated model description for the current SysML2 input, including sequence-diagram validity when the model exposes enough behavior to assess it.",
+      ? "Narrative similarity analysis against the companion TXT description, augmented with ME VAL workbook rule checks and sequence-diagram validity."
+      : "Generated model description for the current SysML2 input, including ME VAL workbook checks and sequence-diagram validity when the model exposes enough behavior to assess it.",
     hero: {
       title: scoreRow ? "Corpus Similarity Assessment" : "Unscored Model Summary",
       copy: scoreRow
-        ? `This tab compares the rendered SysML2 model to its paired natural-language TXT description, highlights the main structure and behavior metrics, and reports how valid the generated sequence view is relative to the source activity flow.`
-        : "This model is not part of the pre-scored comparison corpus, so the tab emphasizes generated model analysis plus a sequence-diagram validity check instead of corpus similarity ratings.",
+        ? `This tab compares the rendered SysML2 model to its paired natural-language TXT description, highlights the main structure and behavior metrics, adds ME VAL workbook compliance checks, and reports how valid the generated sequence view is relative to the source activity flow.`
+        : "This model is not part of the pre-scored comparison corpus, so the tab emphasizes generated model analysis, ME VAL workbook compliance checks, and sequence-diagram validity instead of corpus similarity ratings.",
       scoreText: scoreRow?.likert_score ? `${scoreRow.likert_score} / 5` : "",
       scoreValue: overallSimilarity
     },
@@ -3049,6 +4562,31 @@ function buildCatalog(nextModel) {
       relatedItems: []
     });
   });
+  nextModel.views.requirements.nodes.forEach((node) => {
+    items.push({
+      id: `requirements:${node.id}`,
+      view: "requirements",
+      label: node.label,
+      kind: node.kind,
+      detailRows: [
+        ["Category", humanize(node.category)],
+        ...(node.requirementId ? [["Requirement Id", node.requirementId]] : []),
+        ...(node.typeName ? [["Type", node.typeName]] : []),
+        ...(node.baseType ? [["Base", node.baseType]] : []),
+        ...(node.subjectName ? [["Subject", node.subjectName]] : []),
+        ...(node.subjectType ? [["Subject Type", node.subjectType]] : []),
+        ["Constraints", String(node.constraintCount || 0)]
+      ],
+      lists: [
+        ...(node.requirementText ? [["Requirement Text", [node.requirementText]]] : []),
+        ...(node.description && node.description !== node.requirementText ? [["Description", [node.description]]] : []),
+        ...(node.constraintTexts?.length ? [["Constraint Text", node.constraintTexts]] : []),
+        ...(node.rawText ? [["Raw SysML Text", [node.rawText]]] : []),
+        ...(node.fullPath ? [["Element Path", [node.fullPath]]] : [])
+      ],
+      relatedItems: []
+    });
+  });
   (nextModel.views.analysis?.cards || []).forEach((card) => {
     items.push({
       id: card.id,
@@ -3126,6 +4664,12 @@ function buildCatalog(nextModel) {
         label: message.label || "message"
       }
     ])
+    ,
+    ...nextModel.views.requirements.links.map((link) => ({
+      from: `requirements:${link.from}`,
+      to: `requirements:${link.to}`,
+      label: link.label || link.kind || "trace"
+    }))
     ,
     ...((nextModel.views.analysis?.links || []).map((link) => ({
       from: link.from,
@@ -3267,6 +4811,92 @@ function setOv1EditorStatus(message, isError = false) {
   ov1EditorStatusEl.style.color = isError ? "#b23a48" : "#5b6f82";
 }
 
+function editorTitleForView(viewName = state.currentView) {
+  if (viewName === "bdd") {
+    return "BDD Editor";
+  }
+  if (viewName === "ibd") {
+    return "IBD Editor";
+  }
+  return "OV-1 Editor";
+}
+
+function editorCopyForView(viewName = state.currentView) {
+  if (viewName === "bdd") {
+    return "Reposition definition blocks, pull additional definitions into the canvas from the current SysML file, create composition or association links, and save the resulting structure back into the SysML text.";
+  }
+  if (viewName === "ibd") {
+    return "Reposition internal parts, pull additional parts into the canvas from the current SysML file, create connectors, and save the resulting structure back into the SysML text.";
+  }
+  return "Drag components from the current SysML file into the OV-1 canvas, reposition actors, add operational arrows, and save the result back into the SysML text.";
+}
+
+function editorPaletteLabelForView(viewName = state.currentView) {
+  if (viewName === "bdd") {
+    return "Definitions From File";
+  }
+  if (viewName === "ibd") {
+    return "Parts From File";
+  }
+  return "Components From File";
+}
+
+function editorLinkToolLabelForView(viewName = state.currentView) {
+  if (viewName === "bdd") {
+    return "Relationship Tool";
+  }
+  if (viewName === "ibd") {
+    return "Connector Tool";
+  }
+  return "Arrow Tool";
+}
+
+function editorResetLabelForView(viewName = state.currentView) {
+  if (viewName === "bdd") {
+    return "Reset BDD Edits";
+  }
+  if (viewName === "ibd") {
+    return "Reset IBD Edits";
+  }
+  return "Reset OV-1 Edits";
+}
+
+function currentEditorPaletteItems(viewName = state.currentView) {
+  if (!model) {
+    return [];
+  }
+  if (viewName === "bdd") {
+    return model.views.bdd.componentPool || [];
+  }
+  if (viewName === "ibd") {
+    return model.views.ibd.componentPool || [];
+  }
+  return model.views.ov1.componentPool || [];
+}
+
+function currentEditorPresentIds(viewName = state.currentView) {
+  if (!model) {
+    return new Set();
+  }
+  if (viewName === "bdd") {
+    return new Set(model.views.bdd.blocks.map((block) => block.id));
+  }
+  if (viewName === "ibd") {
+    return new Set(model.views.ibd.parts.map((part) => part.id));
+  }
+  return new Set(model.views.ov1.actors.map((actor) => actor.id));
+}
+
+function editorEntityPrefix(viewName = state.currentView) {
+  if (viewName === "bdd") {
+    return "bdd";
+  }
+  if (viewName === "ibd") {
+    return "ibd";
+  }
+  return "ov1";
+}
+
 function syncSourceTextFromModel() {
   if (!model) {
     return "";
@@ -3285,10 +4915,40 @@ function findOv1Component(componentId) {
   return model?.views.ov1.componentPool?.find((component) => component.id === componentId) || null;
 }
 
+function findBddBlock(blockId) {
+  return model?.views.bdd.blocks.find((block) => block.id === blockId) || null;
+}
+
+function findBddComponent(componentId) {
+  return model?.views.bdd.componentPool?.find((component) => component.id === componentId) || null;
+}
+
+function findIbdPart(partId) {
+  return model?.views.ibd.parts.find((part) => part.id === partId) || null;
+}
+
+function findIbdComponent(componentId) {
+  return model?.views.ibd.componentPool?.find((component) => component.id === componentId) || null;
+}
+
 function clampOv1ActorPosition(x, y) {
   return {
     x: clamp(x, 18, VIEWBOX_WIDTH - OV1_CARD_WIDTH - 18),
     y: clamp(y, 92, VIEWBOX_HEIGHT - OV1_CARD_HEIGHT - 18)
+  };
+}
+
+function clampBddBlockPosition(x, y, width = 210, height = 140) {
+  return {
+    x: clamp(x, 18, VIEWBOX_WIDTH - width - 18),
+    y: clamp(y, 44, VIEWBOX_HEIGHT - height - 18)
+  };
+}
+
+function clampIbdPartPosition(x, y, width = 190, height = 100) {
+  return {
+    x: clamp(x, 56, VIEWBOX_WIDTH - width - 42),
+    y: clamp(y, 78, VIEWBOX_HEIGHT - height - 42)
   };
 }
 
@@ -3306,7 +4966,7 @@ function refreshCatalogAndAnalysis() {
   if (!model) {
     return;
   }
-  model.views.analysis = buildAnalysisView(model, state.analysisPayload, state.currentModelPath);
+  model.views.analysis = buildAnalysisView(model, state.analysisPayload, state.currentModelPath, state.currentSourceText);
   model.views.simulation = buildSimulationReadinessView(model, state.currentModelPath, state.currentSourceText);
   state.catalog = buildCatalog(model);
   if (state.selectedEntityId && !state.catalog.some((item) => item.id === state.selectedEntityId)) {
@@ -3318,32 +4978,46 @@ function refreshOv1EditorPanel() {
   if (!ov1EditorPanelEl) {
     return;
   }
-  const showEditor = Boolean(model) && state.currentView === "ov1";
+  const showEditor = Boolean(model) && isEditableDiagramView(state.currentView);
   ov1EditorPanelEl.classList.toggle("is-hidden", !showEditor);
   if (!showEditor) {
     return;
   }
 
+  if (editorTitleEl) {
+    editorTitleEl.textContent = editorTitleForView();
+  }
+  if (editorCopyEl) {
+    editorCopyEl.textContent = editorCopyForView();
+  }
+  if (editorPaletteLabelEl) {
+    editorPaletteLabelEl.textContent = editorPaletteLabelForView();
+  }
   ov1EditToggleEl.classList.toggle("is-active", state.ov1Editor.enabled);
   ov1EditToggleEl.textContent = state.ov1Editor.enabled ? "Disable Editing" : "Enable Editing";
+  ov1ArrowToolEl.textContent = editorLinkToolLabelForView();
   ov1ArrowToolEl.classList.toggle("is-active", state.ov1Editor.enabled && state.ov1Editor.tool === "arrow");
   ov1ArrowToolEl.disabled = !state.ov1Editor.enabled;
   ov1SaveButtonEl.disabled = !state.ov1Editor.enabled;
+  ov1ResetButtonEl.textContent = editorResetLabelForView();
   ov1ResetButtonEl.disabled = !state.ov1Editor.enabled;
 
   ov1PaletteEl.replaceChildren();
-  const presentActorIds = new Set(model.views.ov1.actors.map((actor) => actor.id));
-  (model.views.ov1.componentPool || []).forEach((component) => {
+  const presentIds = currentEditorPresentIds();
+  const paletteItems = currentEditorPaletteItems();
+  paletteItems.forEach((component) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "ov1-palette-item";
     button.draggable = state.ov1Editor.enabled;
-    button.classList.toggle("is-present", presentActorIds.has(component.id));
+    button.classList.toggle("is-present", presentIds.has(component.id));
     button.classList.toggle("is-selected", state.ov1Editor.paletteSelectionId === component.id);
     const title = document.createElement("strong");
-    title.textContent = component.label;
+    title.textContent = component.paletteTitle || component.label || component.name || component.id;
     const meta = document.createElement("span");
-    meta.textContent = `${humanize(component.type)} • ${component.definitionType}`;
+    meta.textContent =
+      component.paletteMeta ||
+      `${humanize(component.type || component.definitionKind || "component")} • ${component.definitionType || component.typeName || component.name || component.id}`;
     button.append(title, meta);
     button.addEventListener("click", () => {
       if (!state.ov1Editor.enabled) {
@@ -3355,7 +5029,7 @@ function refreshOv1EditorPanel() {
       refreshOv1EditorPanel();
       setOv1EditorStatus(
         state.ov1Editor.paletteSelectionId
-          ? `Click or drop on the OV-1 canvas to place ${component.label}.`
+          ? `Click or drop on the ${editorTitleForView().replace(" Editor", "")} canvas to place ${component.paletteTitle || component.label || component.name || component.id}.`
           : "Palette selection cleared."
       );
       renderAnalysisStatus();
@@ -3366,25 +5040,25 @@ function refreshOv1EditorPanel() {
         return;
       }
       state.ov1Editor.paletteSelectionId = component.id;
-      event.dataTransfer?.setData("text/ov1-component", component.id);
+      event.dataTransfer?.setData("text/sysml-editor-component", component.id);
       event.dataTransfer.effectAllowed = "copyMove";
       refreshOv1EditorPanel();
-      setOv1EditorStatus(`Dragging ${component.label}. Drop it into the OV-1 view to place it.`);
+      setOv1EditorStatus(`Dragging ${component.paletteTitle || component.label || component.name || component.id}. Drop it into the ${editorTitleForView().replace(" Editor", "")} view to place it.`);
     });
     ov1PaletteEl.append(button);
   });
 
-  if (!model.views.ov1.componentPool?.length) {
+  if (!paletteItems.length) {
     const empty = document.createElement("p");
     empty.className = "ov1-editor-status";
-    empty.textContent = "No reusable OV-1 components were inferred from the current SysML file.";
+    empty.textContent = `No reusable ${editorPaletteLabelForView().toLowerCase()} were inferred from the current SysML file.`;
     ov1PaletteEl.append(empty);
   }
 }
 
-function commitOv1ModelUpdates(statusMessage = "") {
-  refreshCatalogAndAnalysis();
+function commitDiagramModelUpdates(statusMessage = "") {
   syncSourceTextFromModel();
+  refreshCatalogAndAnalysis();
   renderCurrentView({ preserveViewport: true });
   refreshOv1EditorPanel();
   if (statusMessage) {
@@ -3419,7 +5093,84 @@ function placeOv1Component(componentId, point) {
   }
   state.selectedEntityId = `ov1:${component.id}`;
   state.ov1Editor.paletteSelectionId = "";
-  commitOv1ModelUpdates(`${component.label} was placed on the OV-1 canvas.`);
+  commitDiagramModelUpdates(`${component.label} was placed on the OV-1 canvas.`);
+}
+
+function placeBddComponent(componentId, point) {
+  if (!model) {
+    return;
+  }
+  const component = findBddComponent(componentId);
+  if (!component) {
+    setOv1EditorStatus("That definition is no longer available from the current SysML file.", true);
+    return;
+  }
+  const blockHeight = bddBlockHeight(component);
+  const position = clampBddBlockPosition(point.x - component.width / 2, point.y - blockHeight / 2, component.width, blockHeight);
+  const existing = findBddBlock(componentId);
+  if (existing) {
+    existing.x = position.x;
+    existing.y = position.y;
+  } else {
+    model.views.bdd.blocks = uniqueBy(
+      [
+        ...model.views.bdd.blocks,
+        {
+          ...deepClone(component),
+          x: position.x,
+          y: position.y
+        }
+      ],
+      (block) => block.id
+    );
+  }
+  state.selectedEntityId = `bdd:${component.id}`;
+  state.ov1Editor.paletteSelectionId = "";
+  commitDiagramModelUpdates(`${component.name} was placed on the BDD canvas.`);
+}
+
+function placeIbdComponent(componentId, point) {
+  if (!model) {
+    return;
+  }
+  const component = findIbdComponent(componentId);
+  if (!component) {
+    setOv1EditorStatus("That part is no longer available from the current SysML file.", true);
+    return;
+  }
+  const position = clampIbdPartPosition(point.x - component.width / 2, point.y - component.height / 2, component.width, component.height);
+  const existing = findIbdPart(componentId);
+  if (existing) {
+    existing.x = position.x;
+    existing.y = position.y;
+  } else {
+    model.views.ibd.parts = uniqueBy(
+      [
+        ...model.views.ibd.parts,
+        {
+          ...deepClone(component),
+          x: position.x,
+          y: position.y
+        }
+      ],
+      (part) => part.id
+    );
+  }
+  state.selectedEntityId = `ibd:${component.id}`;
+  state.ov1Editor.paletteSelectionId = "";
+  commitDiagramModelUpdates(`${component.name} was placed on the IBD canvas.`);
+}
+
+function placeEditorComponent(componentId, point) {
+  if (state.currentView === "bdd") {
+    placeBddComponent(componentId, point);
+    return;
+  }
+  if (state.currentView === "ibd") {
+    placeIbdComponent(componentId, point);
+    return;
+  }
+  placeOv1Component(componentId, point);
 }
 
 function handleOv1ArrowSelection(actorId) {
@@ -3455,7 +5206,120 @@ function handleOv1ArrowSelection(actorId) {
   );
   state.ov1Editor.arrowSourceId = null;
   state.selectedEntityId = `ov1:${actorId}`;
-  commitOv1ModelUpdates(`Added OV-1 arrow from ${titleFromIdentifier(sourceActorId)} to ${titleFromIdentifier(actorId)}.`);
+  commitDiagramModelUpdates(`Added OV-1 arrow from ${titleFromIdentifier(sourceActorId)} to ${titleFromIdentifier(actorId)}.`);
+}
+
+function handleBddRelationshipSelection(blockId) {
+  const sourceBlockId = state.ov1Editor.arrowSourceId;
+  if (!sourceBlockId) {
+    state.ov1Editor.arrowSourceId = blockId;
+    state.selectedEntityId = `bdd:${blockId}`;
+    renderCurrentView({ preserveViewport: true });
+    refreshOv1EditorPanel();
+    setOv1EditorStatus("Relationship source selected. Choose a target block to create a BDD relationship.");
+    return;
+  }
+  if (sourceBlockId === blockId) {
+    state.ov1Editor.arrowSourceId = null;
+    refreshOv1EditorPanel();
+    setOv1EditorStatus("Relationship source cleared.");
+    renderCurrentView({ preserveViewport: true });
+    return;
+  }
+  const kindInput = window.prompt("BDD relationship type (composition or association)", "composition");
+  if (kindInput === null) {
+    state.ov1Editor.arrowSourceId = null;
+    refreshOv1EditorPanel();
+    setOv1EditorStatus("Relationship creation canceled.");
+    renderCurrentView({ preserveViewport: true });
+    return;
+  }
+  const kind = kindInput.trim().toLowerCase();
+  if (!["composition", "association"].includes(kind)) {
+    state.ov1Editor.arrowSourceId = null;
+    refreshOv1EditorPanel();
+    setOv1EditorStatus("Enter either 'composition' or 'association' for the BDD relationship type.", true);
+    renderCurrentView({ preserveViewport: true });
+    return;
+  }
+  const targetBlock = findBddBlock(blockId) || findBddComponent(blockId);
+  const defaultLabel = sanitizeIdentifier(targetBlock?.name || "member", "member");
+  const label = window.prompt("Relationship member name", defaultLabel);
+  if (label === null) {
+    state.ov1Editor.arrowSourceId = null;
+    refreshOv1EditorPanel();
+    setOv1EditorStatus("Relationship creation canceled.");
+    renderCurrentView({ preserveViewport: true });
+    return;
+  }
+  model.views.bdd.relationships = uniqueBy(
+    [
+      ...model.views.bdd.relationships,
+      {
+        from: sourceBlockId,
+        to: blockId,
+        kind,
+        label: sanitizeIdentifier(label.trim() || defaultLabel, defaultLabel)
+      }
+    ],
+    (relationship) => `${relationship.from}:${relationship.to}:${relationship.label || ""}:${relationship.kind || ""}`
+  );
+  state.ov1Editor.arrowSourceId = null;
+  state.selectedEntityId = `bdd:${blockId}`;
+  commitDiagramModelUpdates(`Added a ${kind} relationship from ${titleFromIdentifier(sourceBlockId)} to ${titleFromIdentifier(blockId)}.`);
+}
+
+function handleIbdConnectorSelection(partId) {
+  const sourcePartId = state.ov1Editor.arrowSourceId;
+  if (!sourcePartId) {
+    state.ov1Editor.arrowSourceId = partId;
+    state.selectedEntityId = `ibd:${partId}`;
+    renderCurrentView({ preserveViewport: true });
+    refreshOv1EditorPanel();
+    setOv1EditorStatus("Connector source selected. Choose a target part to create an IBD connector.");
+    return;
+  }
+  if (sourcePartId === partId) {
+    state.ov1Editor.arrowSourceId = null;
+    refreshOv1EditorPanel();
+    setOv1EditorStatus("Connector source cleared.");
+    renderCurrentView({ preserveViewport: true });
+    return;
+  }
+  const label = window.prompt("Connector label", "connects");
+  if (label === null) {
+    state.ov1Editor.arrowSourceId = null;
+    refreshOv1EditorPanel();
+    setOv1EditorStatus("Connector creation canceled.");
+    renderCurrentView({ preserveViewport: true });
+    return;
+  }
+  model.views.ibd.connectors = uniqueBy(
+    [
+      ...model.views.ibd.connectors,
+      {
+        from: sourcePartId,
+        to: partId,
+        label: label.trim() || "connects"
+      }
+    ],
+    (connector) => `${connector.from}:${connector.to}:${connector.label || ""}`
+  );
+  state.ov1Editor.arrowSourceId = null;
+  state.selectedEntityId = `ibd:${partId}`;
+  commitDiagramModelUpdates(`Added an IBD connector from ${titleFromIdentifier(sourcePartId)} to ${titleFromIdentifier(partId)}.`);
+}
+
+function handleEditorLinkSelection(entityId) {
+  if (state.currentView === "bdd") {
+    handleBddRelationshipSelection(entityId);
+    return;
+  }
+  if (state.currentView === "ibd") {
+    handleIbdConnectorSelection(entityId);
+    return;
+  }
+  handleOv1ArrowSelection(entityId);
 }
 
 function promptForSavePath() {
@@ -3489,9 +5353,10 @@ async function saveCurrentModelToWorkspace() {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
     state.currentModelPath = payload.path;
+    state.loadedSourceText = text;
     datasetPathEl.value = payload.path;
-    setImportStatus(`Saved OV-1 edits into ${payload.path}.`);
-    setOv1EditorStatus("OV-1 edits were written into the SysML file as visualizer metadata.");
+    setImportStatus(`Saved ${humanize(state.currentView)} edits into ${payload.path}.`);
+    setOv1EditorStatus("Current diagram edits were written into the SysML file and persisted for reload.");
     await loadDatasetIndex();
   } catch (error) {
     setImportStatus(`Unable to save SysML file: ${error.message}`, true);
@@ -3615,8 +5480,9 @@ function bindEntity(node, entityId) {
   }
   node.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (state.currentView === "ov1" && state.ov1Editor.enabled && state.ov1Editor.tool === "arrow" && entityId.startsWith("ov1:")) {
-      handleOv1ArrowSelection(entityId.replace("ov1:", ""));
+    const prefix = `${editorEntityPrefix()}:`;
+    if (isEditableDiagramView(state.currentView) && state.ov1Editor.enabled && state.ov1Editor.tool === "arrow" && entityId.startsWith(prefix)) {
+      handleEditorLinkSelection(entityId.slice(prefix.length));
       return;
     }
     selectEntity(entityId, { switchView: false, preserveViewport: true, center: false });
@@ -3725,7 +5591,7 @@ function assignPointLayout(items, mode, options) {
 
 function getPreparedView(viewName) {
   const view = deepClone(model.views[viewName]);
-  const mode = viewName === "ov1" && state.ov1Editor.enabled ? "auto" : state.layoutMode;
+  const mode = isEditableDiagramView(viewName) && state.ov1Editor.enabled ? "auto" : state.layoutMode;
   if (viewName === "ov1") {
     assignRectLayout(view.actors, mode, {
       startX: 80,
@@ -3771,6 +5637,53 @@ function getPreparedView(viewName) {
       radiusX: 290,
       radiusY: 170
     });
+  } else if (viewName === "requirements") {
+    const definitionNodes = view.nodes.filter((node) => node.category === "definition");
+    const requirementNodes = view.nodes.filter((node) => node.category === "requirement");
+    const elementNodes = view.nodes.filter((node) => node.category === "element");
+    if (mode === "grid") {
+      assignRectLayout(view.nodes, mode, {
+        startX: 70,
+        startY: 80,
+        columns: 3,
+        gapX: 315,
+        gapY: 170,
+        staggerY: 30,
+        width: 290,
+        height: 120,
+        centerX: 520,
+        centerY: 270,
+        radiusX: 340,
+        radiusY: 190
+      });
+    } else if (mode === "radial") {
+      assignRectLayout(view.nodes, mode, {
+        startX: 70,
+        startY: 80,
+        columns: 3,
+        gapX: 315,
+        gapY: 170,
+        staggerY: 30,
+        width: 290,
+        height: 120,
+        centerX: 520,
+        centerY: 285,
+        radiusX: 350,
+        radiusY: 210
+      });
+    } else {
+      const placeColumn = (items, x, yStart = 82, rowGap = 26) => {
+        let currentY = yStart;
+        items.forEach((item) => {
+          item.x = x;
+          item.y = currentY;
+          currentY += item.height + rowGap;
+        });
+      };
+      placeColumn(definitionNodes, 72);
+      placeColumn(requirementNodes, 384);
+      placeColumn(elementNodes, 736, 96, 24);
+    }
   } else if (viewName === "activity" && !view.lanes?.length) {
     assignPointLayout(view.nodes, mode, {
       startX: 120,
@@ -4013,7 +5926,7 @@ function renderOV1(view) {
 
 function renderBDD(view) {
   titleEl.textContent = view.title;
-  summaryEl.textContent = `Block structure with synchronized explorer and inspector. Layout: ${humanize(state.layoutMode)}. Scope: ${humanize(state.scopeMode)}. Detail: ${humanize(state.detailMode)}.`;
+  summaryEl.textContent = `Block structure with synchronized explorer and inspector.${state.ov1Editor.enabled ? " Editing is enabled for manual placement and relationship authoring." : ""} Layout: ${humanize(state.layoutMode)}. Scope: ${humanize(state.scopeMode)}. Detail: ${humanize(state.detailMode)}.`;
 
   const blockLookup = Object.fromEntries(view.blocks.map((block) => [block.id, block]));
   view.relationships.forEach((relationship) => {
@@ -4048,6 +5961,7 @@ function renderBDD(view) {
     });
     const label = el("text", { x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 8, "font-size": 12, fill: "#344456" }, relationship.label);
     label.classList.add("label-shape");
+    label.setAttribute("pointer-events", "none");
     addCanvasNode(label);
   });
 
@@ -4072,26 +5986,47 @@ function renderBDD(view) {
       rx: 12
     });
     bindEntity(rect, entityId);
+    if (state.currentView === "bdd" && state.ov1Editor.enabled && state.ov1Editor.tool === "move") {
+      rect.style.cursor = "grab";
+      rect.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        const point = clientToDiagramPoint(event.clientX, event.clientY);
+        state.ov1Editor.dragActorId = block.id;
+        state.ov1Editor.dragPointerId = event.pointerId;
+        state.ov1Editor.dragOffset = {
+          x: point.x - block.x,
+          y: point.y - block.y
+        };
+        state.ov1Editor.dragMoved = false;
+        svg.setPointerCapture(event.pointerId);
+      });
+    }
     addCanvasNode(rect);
-    addCanvasNode(el("line", { x1: block.x, y1: block.y + 42, x2: block.x + block.width, y2: block.y + 42, stroke: "#24384c" }));
-    addCanvasNode(
-      el("line", {
+    const headerDivider = el("line", { x1: block.x, y1: block.y + 42, x2: block.x + block.width, y2: block.y + 42, stroke: "#24384c" });
+    headerDivider.setAttribute("pointer-events", "none");
+    addCanvasNode(headerDivider);
+    const memberDivider = el("line", {
         x1: block.x,
         y1: block.y + 42 + visibleProperties.length * 18 + 10,
         x2: block.x + block.width,
         y2: block.y + 42 + visibleProperties.length * 18 + 10,
         stroke: "#24384c"
-      })
-    );
+      });
+    memberDivider.setAttribute("pointer-events", "none");
+    addCanvasNode(memberDivider);
     const stereotypeText = el("text", { x: block.x + 14, y: block.y + 18, "font-size": 12, fill: "#0f766e" }, block.stereotype);
     applyTextState(stereotypeText, entityId);
+    stereotypeText.setAttribute("pointer-events", "none");
     addCanvasNode(stereotypeText);
     const nameText = el("text", { x: block.x + 14, y: block.y + 35, "font-size": 16, "font-weight": 700, fill: "#142433" }, block.name);
     applyTextState(nameText, entityId);
+    nameText.setAttribute("pointer-events", "none");
     addCanvasNode(nameText);
     visibleProperties.forEach((property, index) => {
       const propertyText = el("text", { x: block.x + 14, y: block.y + 60 + index * 18, "font-size": 13, fill: "#344456" }, property);
       applyTextState(propertyText, entityId);
+      propertyText.setAttribute("pointer-events", "none");
       addCanvasNode(propertyText);
     });
     visibleOperations.forEach((operation, index) => {
@@ -4106,6 +6041,7 @@ function renderBDD(view) {
         operation
       );
       applyTextState(operationText, entityId);
+      operationText.setAttribute("pointer-events", "none");
       addCanvasNode(operationText);
     });
     if (hiddenProperties || hiddenOperations) {
@@ -4120,6 +6056,7 @@ function renderBDD(view) {
         `+${hiddenProperties + hiddenOperations} more`
       );
       applyTextState(moreText, entityId);
+      moreText.setAttribute("pointer-events", "none");
       addCanvasNode(moreText);
     }
     registerRenderedEntity({
@@ -4145,9 +6082,23 @@ function portPosition(part, port) {
   return { x: part.x + port.offset, y: part.y + part.height };
 }
 
+function connectorEndpointPosition(partLookup, portLookup, endpoint, isSource = true) {
+  if (portLookup[endpoint]) {
+    return portLookup[endpoint];
+  }
+  const part = partLookup[endpoint.split(".")[0]];
+  if (!part) {
+    return null;
+  }
+  return {
+    x: isSource ? part.x + part.width : part.x,
+    y: part.y + part.height / 2
+  };
+}
+
 function renderIBD(view) {
   titleEl.textContent = view.title;
-  summaryEl.textContent = `Internal structure, ports, and connectors. Layout: ${humanize(state.layoutMode)}. Scope: ${humanize(state.scopeMode)}. Detail: ${humanize(state.detailMode)}.`;
+  summaryEl.textContent = `Internal structure, ports, and connectors.${state.ov1Editor.enabled ? " Editing is enabled for manual placement and connector authoring." : ""} Layout: ${humanize(state.layoutMode)}. Scope: ${humanize(state.scopeMode)}. Detail: ${humanize(state.detailMode)}.`;
 
   addCanvasNode(
     el("rect", {
@@ -4164,6 +6115,7 @@ function renderIBD(view) {
   addCanvasNode(el("text", { x: 58, y: 52, "font-size": 18, "font-weight": 700, fill: "#132536" }, view.frame.name));
 
   const portLookup = {};
+  const partLookup = Object.fromEntries(view.parts.map((part) => [part.id, part]));
   view.parts.forEach((part) => {
     const entityId = `ibd:${part.id}`;
     if (isHiddenEntity(entityId)) {
@@ -4180,25 +6132,46 @@ function renderIBD(view) {
       rx: 14
     });
     bindEntity(rect, entityId);
+    if (state.currentView === "ibd" && state.ov1Editor.enabled && state.ov1Editor.tool === "move") {
+      rect.style.cursor = "grab";
+      rect.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        const point = clientToDiagramPoint(event.clientX, event.clientY);
+        state.ov1Editor.dragActorId = part.id;
+        state.ov1Editor.dragPointerId = event.pointerId;
+        state.ov1Editor.dragOffset = {
+          x: point.x - part.x,
+          y: point.y - part.y
+        };
+        state.ov1Editor.dragMoved = false;
+        svg.setPointerCapture(event.pointerId);
+      });
+    }
     addCanvasNode(rect);
     const visiblePorts = detailSlice(part.ports, 4, 2);
     const hiddenPorts = Math.max(0, part.ports.length - visiblePorts.length);
     const label = el("text", { x: part.x + 14, y: part.y + 28, "font-size": 15, "font-weight": 700, fill: "#142433" }, truncateLabel(part.name, 18, 28));
     applyTextState(label, entityId);
+    label.setAttribute("pointer-events", "none");
     addCanvasNode(label);
     visiblePorts.forEach((port) => {
       const position = portPosition(part, port);
       portLookup[port.id] = position;
-      addCanvasNode(el("circle", { cx: position.x, cy: position.y, r: 7, fill: "#0f766e", stroke: "#ffffff", "stroke-width": 2 }));
+      const portCircle = el("circle", { cx: position.x, cy: position.y, r: 7, fill: "#0f766e", stroke: "#ffffff", "stroke-width": 2 });
+      portCircle.setAttribute("pointer-events", "none");
+      addCanvasNode(portCircle);
       if (state.detailMode !== "compact") {
         const portLabel = el("text", { x: position.x + (port.side === "left" ? 12 : -60), y: position.y - 10, "font-size": 12, fill: "#344456" }, truncateLabel(port.name, 12, 18));
         applyTextState(portLabel, entityId);
+        portLabel.setAttribute("pointer-events", "none");
         addCanvasNode(portLabel);
       }
     });
     if (hiddenPorts) {
       const morePorts = el("text", { x: part.x + 14, y: part.y + part.height - 12, "font-size": 12, fill: "#5f7083" }, `+${hiddenPorts} more ports`);
       applyTextState(morePorts, entityId);
+      morePorts.setAttribute("pointer-events", "none");
       addCanvasNode(morePorts);
     }
     registerRenderedEntity({
@@ -4211,8 +6184,8 @@ function renderIBD(view) {
   });
 
   view.connectors.forEach((connector) => {
-    const from = portLookup[connector.from];
-    const to = portLookup[connector.to];
+    const from = connectorEndpointPosition(partLookup, portLookup, connector.from, true);
+    const to = connectorEndpointPosition(partLookup, portLookup, connector.to, false);
     if (!from || !to) {
       return;
     }
@@ -4240,6 +6213,7 @@ function renderIBD(view) {
     if (state.detailMode !== "compact") {
       const label = el("text", { x: midX - 28, y: (from.y + to.y) / 2 - 8, "font-size": 12, fill: "#344456" }, truncateLabel(connector.label, 14, 20));
       label.classList.add("label-shape");
+      label.setAttribute("pointer-events", "none");
       if (state.contextIds.has(fromEntityId) && state.contextIds.has(toEntityId)) {
         label.classList.add("is-context");
       }
@@ -4621,6 +6595,765 @@ function renderSequence(view) {
   });
 }
 
+function requirementPalette(category) {
+  if (category === "definition") {
+    return {
+      fill: "#e7f5f4",
+      header: "#cbeae6",
+      stroke: "#0f766e",
+      badge: "DEF"
+    };
+  }
+  if (category === "element") {
+    return {
+      fill: "#eef3f7",
+      header: "#dbe4ec",
+      stroke: "#45637d",
+      badge: "ELEM"
+    };
+  }
+  return {
+    fill: "#fff3df",
+    header: "#ffe2ad",
+    stroke: "#9a6700",
+    badge: "REQ"
+  };
+}
+
+function requirementLinkStyle(kind) {
+  if (kind === "satisfy") {
+    return { stroke: "#0f766e", markerEnd: "url(#arrow)", dash: "" };
+  }
+  if (kind === "subject") {
+    return { stroke: "#6b7f91", markerEnd: "url(#arrow)", dash: "5 4" };
+  }
+  if (kind === "type" || kind === "specialize") {
+    return { stroke: "#38536b", markerEnd: "url(#triangle)", dash: kind === "type" ? "6 4" : "" };
+  }
+  if (kind === "refine") {
+    return { stroke: "#c17b00", markerEnd: "url(#arrow)", dash: "3 3" };
+  }
+  if (kind === "verify") {
+    return { stroke: "#2f6690", markerEnd: "url(#arrow)", dash: "2 4" };
+  }
+  if (kind === "derive") {
+    return { stroke: "#7a3f98", markerEnd: "url(#arrow)", dash: "6 3" };
+  }
+  if (kind === "trace") {
+    return { stroke: "#8a5a44", markerEnd: "url(#arrow)", dash: "4 4" };
+  }
+  return { stroke: "#7a3f98", markerEnd: "url(#arrow)", dash: "" };
+}
+
+function requirementAnchor(node, targetNode, isSource = true) {
+  const nodeCenter = node.y + node.height / 2;
+  if (Math.abs((targetNode.x + targetNode.width / 2) - (node.x + node.width / 2)) < 36) {
+    return {
+      x: node.x + node.width / 2,
+      y: isSource ? node.y + node.height : node.y
+    };
+  }
+  return {
+    x: (targetNode.x + targetNode.width / 2) >= (node.x + node.width / 2) ? node.x + node.width : node.x,
+    y: nodeCenter
+  };
+}
+
+function requirementLinkPath(fromNode, toNode) {
+  const source = requirementAnchor(fromNode, toNode, true);
+  const target = requirementAnchor(toNode, fromNode, false);
+  if (Math.abs(source.x - target.x) < 24) {
+    const midY = (source.y + target.y) / 2;
+    return {
+      d: `M ${source.x} ${source.y} C ${source.x} ${midY}, ${target.x} ${midY}, ${target.x} ${target.y}`,
+      labelX: source.x + 18,
+      labelY: midY - 10
+    };
+  }
+  const deltaX = Math.abs(target.x - source.x);
+  const curve = Math.max(42, deltaX * 0.34);
+  return {
+    d: `M ${source.x} ${source.y} C ${source.x + (target.x >= source.x ? curve : -curve)} ${source.y}, ${target.x - (target.x >= source.x ? curve : -curve)} ${target.y}, ${target.x} ${target.y}`,
+    labelX: (source.x + target.x) / 2,
+    labelY: (source.y + target.y) / 2 - 10
+  };
+}
+
+function renderRequirements(view) {
+  titleEl.textContent = view.title;
+  summaryEl.textContent = `${view.summary} Layout: ${humanize(state.layoutMode)}. Scope: ${humanize(state.scopeMode)}. Detail: ${humanize(state.detailMode)}.`;
+
+  addCanvasNode(
+    el("rect", {
+      x: 26,
+      y: 20,
+      width: 988,
+      height: 520,
+      rx: 26,
+      fill: "rgba(255,255,255,0.7)",
+      stroke: "rgba(53, 81, 104, 0.18)",
+      "stroke-width": 2
+    })
+  );
+  addCanvasNode(el("text", { x: 52, y: 52, "font-size": 18, "font-weight": 700, fill: "#142433" }, "SYSML REQUIREMENTS"));
+  addCanvasNode(el("text", { x: 52, y: 74, "font-size": 12, fill: "#5b6f82" }, truncateLabel(view.summary || "", 84, 120)));
+
+  if (!view.nodes.length) {
+    const empty = el("text", { x: 72, y: 124, "font-size": 14, fill: "#5b6f82" }, view.emptyMessage || "No requirements found.");
+    empty.classList.add("label-shape");
+    addCanvasNode(empty);
+    return;
+  }
+
+  const nodeLookup = Object.fromEntries(view.nodes.map((node) => [node.id, node]));
+  view.links.forEach((link) => {
+    const fromNode = nodeLookup[link.from];
+    const toNode = nodeLookup[link.to];
+    if (!fromNode || !toNode) {
+      return;
+    }
+    const fromEntityId = `requirements:${link.from}`;
+    const toEntityId = `requirements:${link.to}`;
+    if (isHiddenEntity(fromEntityId) || isHiddenEntity(toEntityId)) {
+      return;
+    }
+    const style = requirementLinkStyle(link.kind);
+    const pathSpec = requirementLinkPath(fromNode, toNode);
+    const path = addCanvasNode(
+      el("path", {
+        d: pathSpec.d,
+        fill: "none",
+        stroke: style.stroke,
+        "stroke-width": 2.4,
+        "marker-end": style.markerEnd
+      })
+    );
+    path.classList.add("link-shape");
+    if (style.dash) {
+      path.setAttribute("stroke-dasharray", style.dash);
+    }
+    if (state.contextIds.has(fromEntityId) && state.contextIds.has(toEntityId)) {
+      path.classList.add("is-context");
+    }
+    if (isMutedEntity(fromEntityId) || isMutedEntity(toEntityId)) {
+      path.classList.add("is-muted");
+    }
+    registerRenderedLink({ from: fromEntityId, to: toEntityId, label: link.label || link.kind });
+    if (state.detailMode === "full" || (state.detailMode === "standard" && link.kind !== "subject")) {
+      const label = el(
+        "text",
+        { x: pathSpec.labelX, y: pathSpec.labelY, "font-size": 11, fill: style.stroke, "font-weight": 700 },
+        truncateLabel(link.label || humanize(link.kind), 14, 22)
+      );
+      label.classList.add("label-shape");
+      label.setAttribute("pointer-events", "none");
+      addCanvasNode(label);
+    }
+  });
+
+  view.nodes.forEach((node) => {
+    const entityId = `requirements:${node.id}`;
+    if (isHiddenEntity(entityId)) {
+      return;
+    }
+    const palette = requirementPalette(node.category);
+    const rect = el("rect", {
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      rx: 16,
+      fill: palette.fill,
+      stroke: palette.stroke,
+      "stroke-width": 2
+    });
+    bindEntity(rect, entityId);
+    addCanvasNode(rect);
+    const header = el("rect", {
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: 28,
+      rx: 16,
+      fill: palette.header
+    });
+    header.setAttribute("pointer-events", "none");
+    addCanvasNode(header);
+
+    const badge = el("text", { x: node.x + 14, y: node.y + 19, "font-size": 11, fill: palette.stroke, "font-weight": 700 }, palette.badge);
+    applyTextState(badge, entityId);
+    badge.setAttribute("pointer-events", "none");
+    addCanvasNode(badge);
+
+    const titleLines = wrapSvgText(node.label, state.detailMode === "compact" ? 20 : 28).slice(0, state.detailMode === "compact" ? 1 : 2);
+    titleLines.forEach((line, index) => {
+      const titleLine = el(
+        "text",
+        { x: node.x + 14, y: node.y + 48 + index * 16, "font-size": 14, fill: "#142433", "font-weight": 700 },
+        line
+      );
+      applyTextState(titleLine, entityId);
+      titleLine.setAttribute("pointer-events", "none");
+      addCanvasNode(titleLine);
+    });
+
+    let detailY = node.y + 76;
+    const detailLines = [];
+    if (node.requirementId && state.detailMode !== "compact") {
+      detailLines.push(`Id: ${node.requirementId}`);
+    }
+    if (node.typeName && state.detailMode !== "compact") {
+      detailLines.push(`Type: ${node.typeName}`);
+    }
+    if (node.baseType && state.detailMode !== "compact") {
+      detailLines.push(`Base: ${node.baseType}`);
+    }
+    if (node.subjectName && state.detailMode === "full") {
+      detailLines.push(`Subject: ${node.subjectName}`);
+    }
+    if (node.category !== "element") {
+      detailLines.push(`Constraints: ${node.constraintCount || 0}`);
+    }
+    detailSlice(detailLines, 3, 1).forEach((line) => {
+      const detail = el("text", { x: node.x + 14, y: detailY, "font-size": 11, fill: "#5b6f82" }, truncateLabel(line, 28, 38));
+      applyTextState(detail, entityId);
+      detail.setAttribute("pointer-events", "none");
+      addCanvasNode(detail);
+      detailY += 14;
+    });
+
+    const nodeTextPreview = node.requirementText || node.description || node.rawText || "";
+    if (nodeTextPreview && state.detailMode !== "compact") {
+      const snippet = wrapSvgText(nodeTextPreview, state.detailMode === "full" ? 34 : 28).slice(0, state.detailMode === "full" ? 3 : 2);
+      snippet.forEach((line, index) => {
+        const description = el(
+          "text",
+          { x: node.x + 14, y: node.y + node.height - 18 - (snippet.length - index - 1) * 13, "font-size": 11, fill: "#344456" },
+          truncateLabel(line, 30, 42)
+        );
+        applyTextState(description, entityId);
+        description.setAttribute("pointer-events", "none");
+        addCanvasNode(description);
+      });
+    }
+
+    registerRenderedEntity({
+      id: entityId,
+      label: node.label,
+      kind: node.kind,
+      view: "requirements",
+      bounds: { x: node.x, y: node.y, width: node.width, height: node.height }
+    });
+  });
+}
+
+function requirementsViewModel() {
+  return model?.views?.requirements || { nodes: [], links: [], summary: "" };
+}
+
+function searchTextForRequirementNode(node) {
+  return [
+    node.label,
+    node.name,
+    node.requirementId,
+    node.typeName,
+    node.baseType,
+    node.parentName,
+    node.requirementText,
+    node.subjectName,
+    node.subjectType,
+    node.description,
+    node.rawText,
+    node.fullPath,
+    ...(node.constraintTexts || []),
+    ...(node.requiredTargets || []).flatMap((entry) => [entry.target, entry.typeName, entry.kind]),
+    ...(node.traceLinks || []).flatMap((entry) => [entry.kind, entry.target]),
+    ...(node.satisfyBy || [])
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function formatRequirementTarget(entry) {
+  const target = entry?.target || "Unnamed target";
+  const typeName = entry?.typeName ? ` : ${entry.typeName}` : "";
+  return `${target}${typeName}`;
+}
+
+function formatRequirementTrace(entry) {
+  return `${humanize(entry?.kind || "trace")} -> ${entry?.target || "Unnamed target"}`;
+}
+
+function requirementDetailField(label, value) {
+  const field = document.createElement("div");
+  field.className = "requirements-field";
+  const key = document.createElement("span");
+  key.className = "requirements-field-label";
+  key.textContent = label;
+  const val = document.createElement("div");
+  val.className = "requirements-field-value";
+  val.textContent = value || "Not set";
+  field.append(key, val);
+  return field;
+}
+
+function requirementDetailSection(title, values, options = {}) {
+  const { code = false } = options;
+  const section = document.createElement("section");
+  section.className = "requirements-detail-section";
+  const heading = document.createElement("h5");
+  heading.textContent = title;
+  section.append(heading);
+  if (!values.length) {
+    const empty = document.createElement("div");
+    empty.className = "requirements-detail-item";
+    empty.textContent = "None parsed.";
+    section.append(empty);
+    return section;
+  }
+  const list = document.createElement("div");
+  list.className = "requirements-detail-list";
+  values.forEach((value) => {
+    const item = document.createElement("div");
+    item.className = `requirements-detail-item${code ? " is-code" : ""}`;
+    item.textContent = value;
+    list.append(item);
+  });
+  section.append(list);
+  return section;
+}
+
+function isMeaningfulRequirementValue(value) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === "string") {
+    return Boolean(value.trim());
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return true;
+}
+
+function requirementFieldLabel(key) {
+  const labels = {
+    id: "Node Id",
+    label: "Display Label",
+    shortName: "Short Name",
+    name: "Raw Name",
+    requirementId: "Requirement Id",
+    typeName: "Type",
+    baseType: "Base Type",
+    parentName: "Parent Requirement",
+    subjectName: "Subject",
+    subjectType: "Subject Type",
+    constraintCount: "Constraint Count",
+    requiredTargets: "Required Targets",
+    traceLinks: "Trace Links",
+    satisfyBy: "Satisfied By",
+    requirementText: "Requirement Text",
+    description: "Description",
+    constraintTexts: "Constraint Text",
+    rawText: "Raw SysML Text",
+    fullPath: "Qualified Name",
+    category: "Category",
+    kind: "Kind",
+    relatedItems: "Related Items"
+  };
+  return labels[key] || humanize(key);
+}
+
+function formatGenericRequirementEntry(entry) {
+  if (entry === null || entry === undefined) {
+    return "";
+  }
+  if (typeof entry === "string") {
+    return entry;
+  }
+  if (typeof entry === "number" || typeof entry === "boolean") {
+    return String(entry);
+  }
+  if (Array.isArray(entry)) {
+    return entry.map((value) => formatGenericRequirementEntry(value)).filter(Boolean).join(", ");
+  }
+  const parts = Object.entries(entry)
+    .filter(([, value]) => isMeaningfulRequirementValue(value))
+    .map(([key, value]) => `${requirementFieldLabel(key)}: ${formatGenericRequirementEntry(value)}`);
+  return parts.join(" • ") || JSON.stringify(entry, null, 2);
+}
+
+function formatRequirementModalEntries(key, value) {
+  if (!isMeaningfulRequirementValue(value)) {
+    return [];
+  }
+  if (key === "requiredTargets") {
+    return value.map((entry) => formatRequirementTarget(entry)).filter(Boolean);
+  }
+  if (key === "traceLinks") {
+    return value.map((entry) => formatRequirementTrace(entry)).filter(Boolean);
+  }
+  if (key === "relatedItems") {
+    return value
+      .map((entry) => [entry.label, entry.kind, entry.note].filter(Boolean).join(" • "))
+      .filter(Boolean);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => formatGenericRequirementEntry(entry)).filter(Boolean);
+  }
+  if (typeof value === "object") {
+    return [formatGenericRequirementEntry(value)].filter(Boolean);
+  }
+  return [String(value)];
+}
+
+function resolveRequirementModalRecord(item) {
+  if (!item || item.view !== "requirements") {
+    return null;
+  }
+  const nodeId = item.id.startsWith("requirements:") ? item.id.slice("requirements:".length) : item.id;
+  const node = model?.views?.requirements?.nodes?.find((candidate) => candidate.id === nodeId) || null;
+  return {
+    ...(node || {}),
+    id: node?.id || nodeId,
+    label: item.label,
+    kind: node?.kind || item.kind,
+    view: item.view,
+    category: node?.category || "",
+    relatedItems: item.relatedItems || [],
+    detailRows: item.detailRows || [],
+    lists: item.lists || []
+  };
+}
+
+function openRequirementsExplorerModal(itemId) {
+  const item = state.catalog.find((entry) => entry.id === itemId && entry.view === "requirements");
+  if (!item) {
+    return;
+  }
+  state.requirementsModalId = item.id;
+  renderRequirementsExplorerModal();
+}
+
+function closeRequirementsExplorerModal() {
+  state.requirementsModalId = "";
+  renderRequirementsExplorerModal();
+}
+
+function renderRequirementsExplorerModal() {
+  if (
+    !requirementsExplorerModalEl ||
+    !requirementsExplorerModalTitleEl ||
+    !requirementsExplorerModalSubtitleEl ||
+    !requirementsExplorerModalContentEl
+  ) {
+    return;
+  }
+
+  const item = state.catalog.find((entry) => entry.id === state.requirementsModalId && entry.view === "requirements") || null;
+  const record = resolveRequirementModalRecord(item);
+  const isOpen = Boolean(record);
+  requirementsExplorerModalEl.classList.toggle("is-hidden", !isOpen);
+  requirementsExplorerModalEl.setAttribute("aria-hidden", String(!isOpen));
+  requirementsExplorerModalContentEl.replaceChildren();
+  if (!record) {
+    state.requirementsModalId = "";
+    return;
+  }
+
+  requirementsExplorerModalTitleEl.textContent = record.label || "Requirement Detail";
+  requirementsExplorerModalSubtitleEl.textContent = [
+    record.kind || "Requirement",
+    record.requirementId ? `ID ${record.requirementId}` : "",
+    record.relatedItems?.length ? `${record.relatedItems.length} related link${record.relatedItems.length === 1 ? "" : "s"}` : ""
+  ]
+    .filter(Boolean)
+    .join(" • ");
+
+  const hero = document.createElement("div");
+  hero.className = "requirements-detail-hero";
+  const chips = document.createElement("div");
+  chips.className = "diagram-chip-row";
+  [record.kind, record.category ? humanize(record.category) : ""].filter(Boolean).forEach((value) => {
+    const chip = document.createElement("span");
+    chip.className = "diagram-chip";
+    chip.textContent = value;
+    chips.append(chip);
+  });
+  hero.append(chips);
+  if (record.requirementText || record.description || record.rawText) {
+    const copy = document.createElement("div");
+    copy.className = "requirements-detail-copy";
+    copy.textContent = record.requirementText || record.description || record.rawText;
+    hero.append(copy);
+  }
+  requirementsExplorerModalContentEl.append(hero);
+
+  const fieldGrid = document.createElement("div");
+  fieldGrid.className = "requirements-field-grid";
+  const orderedKeys = [
+    "label",
+    "name",
+    "shortName",
+    "requirementId",
+    "category",
+    "kind",
+    "typeName",
+    "baseType",
+    "parentName",
+    "subjectName",
+    "subjectType",
+    "constraintCount",
+    "fullPath",
+    "id"
+  ];
+  const sectionKeys = new Set(["requirementText", "description", "constraintTexts", "requiredTargets", "traceLinks", "satisfyBy", "relatedItems", "rawText"]);
+  const excludedKeys = new Set(["x", "y", "width", "height", "view", "detailRows", "lists", "searchText"]);
+  const renderedScalarKeys = new Set();
+  orderedKeys.forEach((key) => {
+    if (!isMeaningfulRequirementValue(record[key])) {
+      return;
+    }
+    renderedScalarKeys.add(key);
+    fieldGrid.append(requirementDetailField(requirementFieldLabel(key), String(record[key])));
+  });
+  Object.keys(record).forEach((key) => {
+    if (renderedScalarKeys.has(key) || sectionKeys.has(key) || excludedKeys.has(key) || Array.isArray(record[key]) || typeof record[key] === "object") {
+      return;
+    }
+    if (!isMeaningfulRequirementValue(record[key])) {
+      return;
+    }
+    fieldGrid.append(requirementDetailField(requirementFieldLabel(key), String(record[key])));
+  });
+  if (fieldGrid.children.length) {
+    requirementsExplorerModalContentEl.append(fieldGrid);
+  }
+
+  const orderedSections = ["requirementText", "description", "requiredTargets", "traceLinks", "satisfyBy", "constraintTexts", "relatedItems", "rawText"];
+  const renderedSectionKeys = new Set();
+  orderedSections.forEach((key) => {
+    const values = formatRequirementModalEntries(key, record[key]);
+    if (!values.length) {
+      return;
+    }
+    renderedSectionKeys.add(key);
+    const isCode = key === "constraintTexts" || key === "rawText";
+    requirementsExplorerModalContentEl.append(requirementDetailSection(requirementFieldLabel(key), values, { code: isCode }));
+  });
+  Object.keys(record).forEach((key) => {
+    if (renderedScalarKeys.has(key) || renderedSectionKeys.has(key) || excludedKeys.has(key)) {
+      return;
+    }
+    const value = record[key];
+    if (!Array.isArray(value) && typeof value !== "object") {
+      return;
+    }
+    const values = formatRequirementModalEntries(key, value);
+    if (!values.length) {
+      return;
+    }
+    requirementsExplorerModalContentEl.append(requirementDetailSection(requirementFieldLabel(key), values));
+  });
+}
+
+function renderRequirementsBoard() {
+  if (!requirementsBoardEl || !requirementsListEl || !requirementsDetailEl) {
+    return;
+  }
+
+  const isActive = state.currentView === "requirements";
+  requirementsBoardEl.classList.toggle("is-hidden", !isActive);
+  if (!isActive || !model) {
+    requirementsListEl.replaceChildren();
+    requirementsDetailEl.replaceChildren();
+    return;
+  }
+
+  const view = requirementsViewModel();
+  titleEl.textContent = view.title || "Requirements Workspace";
+  summaryEl.textContent = "Workspace-first requirements review with searchable IDs, readable text, and every mapped requirement field.";
+  const requirementNodes = view.nodes.filter((node) => node.category !== "element");
+  const definitionCount = requirementNodes.filter((node) => node.category === "definition").length;
+  const requirementCount = requirementNodes.filter((node) => node.category === "requirement").length;
+  const query = currentSearchQuery();
+  const filteredNodes = requirementNodes
+    .filter((node) => !query || searchTextForRequirementNode(node).includes(query))
+    .sort((left, right) => {
+      const categoryOrder = left.category.localeCompare(right.category);
+      if (categoryOrder !== 0) {
+        return categoryOrder;
+      }
+      const idOrder = String(left.requirementId || "").localeCompare(String(right.requirementId || ""));
+      if (idOrder !== 0) {
+        return idOrder;
+      }
+      return left.label.localeCompare(right.label);
+    });
+
+  if (requirementsSearchEl && requirementsSearchEl.value !== searchInputEl.value) {
+    requirementsSearchEl.value = searchInputEl.value;
+  }
+  if (requirementsSummaryEl) {
+    requirementsSummaryEl.textContent = `Parsed ${requirementCount} requirements and ${definitionCount} requirement definitions from the current SysML2 input. Select any entry to inspect its mapped text, relationships, and raw SysML fields.`;
+  }
+  if (requirementsListCountEl) {
+    requirementsListCountEl.textContent = `${filteredNodes.length} of ${requirementNodes.length} items`;
+  }
+
+  requirementsListEl.replaceChildren();
+  if (!filteredNodes.length) {
+    const empty = document.createElement("div");
+    empty.className = "requirements-list-empty";
+    empty.textContent = query
+      ? "No parsed requirements match the current search. Clear or broaden the query to see more items."
+      : "No parsed requirements are available for listing.";
+    requirementsListEl.append(empty);
+  } else {
+    filteredNodes.forEach((node) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "requirements-list-item";
+      const entityId = `requirements:${node.id}`;
+      button.classList.toggle("is-selected", state.selectedEntityId === entityId);
+      button.classList.toggle("is-context", isContextEntity(entityId));
+      button.classList.toggle("is-muted", isMutedEntity(entityId));
+
+      const top = document.createElement("div");
+      top.className = "requirements-list-top";
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "requirements-list-title";
+      const label = document.createElement("span");
+      label.className = "requirements-list-label";
+      label.textContent = node.requirementId ? `${node.requirementId} ${node.shortName || node.label}` : node.label;
+      const meta = document.createElement("span");
+      meta.className = "requirements-list-meta";
+      meta.textContent = [node.typeName || node.baseType || node.kind, node.subjectName ? `subject ${node.subjectName}` : ""].filter(Boolean).join(" • ");
+      titleWrap.append(label, meta);
+      const pill = document.createElement("span");
+      pill.className = `requirements-kind-pill is-${node.category}`.trim();
+      pill.textContent = node.category === "definition" ? "Definition" : "Requirement";
+      top.append(titleWrap, pill);
+      button.append(top);
+
+      const previewText = node.requirementText || node.description || node.rawText || "";
+      if (previewText) {
+        const copy = document.createElement("div");
+        copy.className = "requirements-list-copy";
+        copy.textContent = previewText;
+        button.append(copy);
+      }
+
+      const tags = [
+        node.parentName ? `Parent: ${node.parentName}` : "",
+        `Constraints: ${node.constraintCount || 0}`,
+        node.subjectType ? `Subject Type: ${node.subjectType}` : ""
+      ].filter(Boolean);
+      if (tags.length) {
+        const tagWrap = document.createElement("div");
+        tagWrap.className = "requirements-list-tags";
+        tags.forEach((tag) => {
+          const chip = document.createElement("span");
+          chip.className = "requirements-tag";
+          chip.textContent = tag;
+          tagWrap.append(chip);
+        });
+        button.append(tagWrap);
+      }
+
+      button.addEventListener("click", () => selectEntity(entityId, { switchView: false, preserveViewport: true, center: true }));
+      requirementsListEl.append(button);
+    });
+  }
+
+  requirementsDetailEl.replaceChildren();
+  const selectedId = state.selectedEntityId?.startsWith("requirements:") ? state.selectedEntityId.slice("requirements:".length) : "";
+  const selectedNode = view.nodes.find((node) => node.id === selectedId) || null;
+  if (!selectedNode) {
+    const empty = document.createElement("div");
+    empty.className = "requirements-detail-empty";
+    empty.textContent = "Select a requirement from the list or explorer to inspect every parsed field here.";
+    requirementsDetailEl.append(empty);
+    return;
+  }
+
+  const hero = document.createElement("div");
+  hero.className = "requirements-detail-hero";
+  const chips = document.createElement("div");
+  chips.className = "diagram-chip-row";
+  [selectedNode.kind, humanize(selectedNode.category)].forEach((value) => {
+    const chip = document.createElement("span");
+    chip.className = "diagram-chip";
+    chip.textContent = value;
+    chips.append(chip);
+  });
+  const title = document.createElement("h4");
+  title.className = "requirements-detail-title";
+  title.textContent = selectedNode.label;
+  hero.append(chips, title);
+  if (selectedNode.requirementId) {
+    const subhead = document.createElement("div");
+    subhead.className = "requirements-detail-subhead";
+    subhead.textContent = `Requirement ID: ${selectedNode.requirementId}`;
+    hero.append(subhead);
+  }
+  const heroText = selectedNode.requirementText || selectedNode.description || selectedNode.rawText || "";
+  if (heroText) {
+    const copy = document.createElement("div");
+    copy.className = "requirements-detail-copy";
+    copy.textContent = heroText;
+    hero.append(copy);
+  }
+  requirementsDetailEl.append(hero);
+
+  const fieldGrid = document.createElement("div");
+  fieldGrid.className = "requirements-field-grid";
+  [
+    ["Display Label", selectedNode.label],
+    ["Node Id", selectedNode.id],
+    ["Raw Name", selectedNode.name],
+    ["Requirement Id", selectedNode.requirementId],
+    ["Short Name", selectedNode.shortName || ""],
+    ["Category", humanize(selectedNode.category)],
+    ["Kind", selectedNode.kind],
+    ["Type", selectedNode.typeName],
+    ["Base Type", selectedNode.baseType],
+    ["Parent Requirement", selectedNode.parentName],
+    ["Subject", selectedNode.subjectName],
+    ["Subject Type", selectedNode.subjectType],
+    ["Constraint Count", String(selectedNode.constraintCount ?? 0)],
+    ["Required Target Count", String((selectedNode.requiredTargets || []).length)],
+    ["Trace Link Count", String((selectedNode.traceLinks || []).length)],
+    ["Satisfy Count", String((selectedNode.satisfyBy || []).length)],
+    ["Qualified Name", selectedNode.fullPath || selectedNode.name || ""]
+  ].forEach(([label, value]) => {
+    fieldGrid.append(requirementDetailField(label, value));
+  });
+  requirementsDetailEl.append(fieldGrid);
+
+  const nodeLookup = Object.fromEntries(view.nodes.map((node) => [node.id, node]));
+  const relatedLinks = view.links
+    .filter((link) => link.from === selectedNode.id || link.to === selectedNode.id)
+    .map((link) => {
+      if (link.from === selectedNode.id) {
+        return `${humanize(link.kind)} -> ${nodeLookup[link.to]?.label || link.to}`;
+      }
+      return `${humanize(link.kind)} <- ${nodeLookup[link.from]?.label || link.from}`;
+    });
+
+  requirementsDetailEl.append(
+    requirementDetailSection("Requirement Text", [selectedNode.requirementText || selectedNode.description || selectedNode.rawText || "No requirement text parsed."]),
+    requirementDetailSection("Constraint Text", selectedNode.constraintTexts || [], { code: true }),
+    requirementDetailSection("Description", [selectedNode.description || "No description parsed."]),
+    requirementDetailSection("Required Targets", (selectedNode.requiredTargets || []).map(formatRequirementTarget)),
+    requirementDetailSection("Trace Links", (selectedNode.traceLinks || []).map(formatRequirementTrace)),
+    requirementDetailSection("Satisfied By", selectedNode.satisfyBy || []),
+    requirementDetailSection("Related Links", relatedLinks),
+    requirementDetailSection("Raw SysML Text", [selectedNode.rawText || "No raw SysML text parsed."], { code: true })
+  );
+}
+
 function renderAnalysisTerms(label, values, missing = false) {
   if (!values.length) {
     return null;
@@ -4816,6 +7549,7 @@ function renderExplorer() {
     { title: "Operational", key: "ov1" },
     { title: "Definitions", key: "bdd" },
     { title: "Internal Structure", key: "ibd" },
+    { title: "Requirements", key: "requirements" },
     { title: "Behavior", key: "activity" },
     { title: "Sequence", key: "sequence" },
     { title: "Analysis", key: "analysis" },
@@ -4839,6 +7573,8 @@ function renderExplorer() {
     title.textContent = `${group.title} (${items.length})`;
     section.append(title);
     items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "explorer-item-row";
       const button = document.createElement("button");
       button.type = "button";
       button.className = "explorer-item";
@@ -4853,7 +7589,19 @@ function renderExplorer() {
       meta.textContent = `${item.kind} • ${item.relatedItems.length} links`;
       button.append(label, meta);
       button.addEventListener("click", () => selectEntity(item.id, { switchView: true, preserveViewport: false, center: true }));
-      section.append(button);
+      row.append(button);
+      if (group.key === "requirements") {
+        const showButton = document.createElement("button");
+        showButton.type = "button";
+        showButton.className = "toolbar-button toolbar-button-secondary explorer-item-show";
+        showButton.textContent = "Show";
+        showButton.addEventListener("click", (event) => {
+          event.stopPropagation();
+          openRequirementsExplorerModal(item.id);
+        });
+        row.append(showButton);
+      }
+      section.append(row);
     });
     explorerTreeEl.append(section);
   });
@@ -5002,7 +7750,7 @@ function renderAnalysisStatus() {
           ["Scope", humanize(state.scopeMode)],
           ["Detail", humanize(state.detailMode)]
         ];
-  if (state.currentView === "ov1" && state.ov1Editor.enabled) {
+  if (isEditableDiagramView(state.currentView) && state.ov1Editor.enabled) {
     chips.push(["Edit", "On"], ["Tool", humanize(state.ov1Editor.tool)]);
   }
   if (currentSearchQuery()) {
@@ -5023,7 +7771,10 @@ function renderAnalysisStatus() {
 
 function renderOverview() {
   overviewSvg.replaceChildren();
-  if (isTextFirstView(state.currentView)) {
+  if (isTextFirstView(state.currentView) || isWorkspaceFirstView(state.currentView)) {
+    const summaryCopy = isWorkspaceFirstView(state.currentView)
+      ? "This tab uses the main panel for searchable requirement review instead of a diagram overview."
+      : "This tab is text-first, so the overview pane shows score cards in the main panel.";
     overviewSvg.append(
       el("text", { x: 18, y: 34, "font-size": 15, fill: "#4f6274", "font-weight": 700 }, `${humanize(state.currentView)} View`)
     );
@@ -5031,7 +7782,7 @@ function renderOverview() {
       el(
         "text",
         { x: 18, y: 60, "font-size": 12, fill: "#6d7f90" },
-        "This tab is text-first, so the overview pane shows score cards in the main panel."
+        summaryCopy
       )
     );
     return;
@@ -5126,19 +7877,28 @@ function renderCurrentView({ preserveViewport = true } = {}) {
   if (!model) {
     return;
   }
+  if (isEditableDiagramView(state.currentView) && state.ov1Editor.enabled && state.layoutMode !== "auto") {
+    state.layoutMode = "auto";
+    layoutSelectEl.value = "auto";
+  }
   syncViewButtons();
   refreshDerivedState();
   state.renderEntities = [];
   state.renderLinks = [];
   const isTextView = isTextFirstView(state.currentView);
-  svg.classList.toggle("is-hidden", isTextView);
+  const isWorkspaceView = isWorkspaceFirstView(state.currentView);
+  workbenchEl?.classList.toggle("is-requirements-focus", isWorkspaceView);
+  diagramPanelEl?.classList.toggle("is-requirements-focus", isWorkspaceView);
+  canvasCardEl?.classList.toggle("is-hidden", isWorkspaceView);
+  inspectorPanelEl?.classList.toggle("is-hidden", isWorkspaceView);
+  svg.classList.toggle("is-hidden", isTextView || isWorkspaceView);
   analysisViewEl.classList.toggle("is-hidden", !isTextView);
-  svg.classList.toggle("is-editable", state.currentView === "ov1" && state.ov1Editor.enabled);
+  svg.classList.toggle("is-editable", !isWorkspaceView && isEditableDiagramView(state.currentView) && state.ov1Editor.enabled);
   if (!isTextView) {
     analysisViewEl.replaceChildren();
     resetSvg();
   }
-  const preparedView = isTextView ? model.views[state.currentView] : getPreparedView(state.currentView);
+  const preparedView = isTextView || isWorkspaceView ? model.views[state.currentView] : getPreparedView(state.currentView);
   if (state.currentView === "ov1") {
     renderOV1(preparedView);
   } else if (state.currentView === "bdd") {
@@ -5153,7 +7913,7 @@ function renderCurrentView({ preserveViewport = true } = {}) {
     renderActivity(preparedView);
   }
   state.currentBounds = computeBoundsFromEntities();
-  if (isTextView) {
+  if (isTextView || isWorkspaceView) {
     state.transform = { scale: 1, x: 0, y: 0 };
   } else if (preserveViewport) {
     applyTransform();
@@ -5163,8 +7923,10 @@ function renderCurrentView({ preserveViewport = true } = {}) {
   renderExplorer();
   renderInspector();
   renderAnalysisStatus();
+  renderRequirementsBoard();
   refreshOv1EditorPanel();
   renderOverview();
+  renderRequirementsExplorerModal();
   if (state.pendingFocusEntityId) {
     centerEntityById(state.pendingFocusEntityId);
     state.pendingFocusEntityId = null;
@@ -5173,7 +7935,7 @@ function renderCurrentView({ preserveViewport = true } = {}) {
 
 function applyModel(nextModel, statusMessage, sourceText = modelTextEl.value, options = {}) {
   const { sourcePath = "", analysisPayload = null } = options;
-  nextModel.views.analysis = buildAnalysisView(nextModel, analysisPayload, sourcePath);
+  nextModel.views.analysis = buildAnalysisView(nextModel, analysisPayload, sourcePath, sourceText);
   nextModel.views.simulation = buildSimulationReadinessView(nextModel, sourcePath, sourceText);
   model = nextModel;
   modelTitleEl.textContent = model.title || "SysML2 Visualizer";
@@ -5181,6 +7943,7 @@ function applyModel(nextModel, statusMessage, sourceText = modelTextEl.value, op
   modelTextEl.value = sourceText;
   state.currentModelPath = sourcePath;
   state.currentSourceText = sourceText;
+  state.loadedSourceText = sourceText;
   state.analysisPayload = analysisPayload;
   state.ov1Editor.paletteSelectionId = "";
   state.ov1Editor.arrowSourceId = null;
@@ -5190,10 +7953,7 @@ function applyModel(nextModel, statusMessage, sourceText = modelTextEl.value, op
   state.ov1Editor.dragMoved = false;
   state.catalog = buildCatalog(nextModel);
   const retainedSelection = state.catalog.find((item) => item.id === state.selectedEntityId && item.view === state.currentView);
-  state.selectedEntityId =
-    isTextFirstView(state.currentView)
-      ? retainedSelection?.id || defaultCardSelectionId(state.currentView)
-      : null;
+  state.selectedEntityId = retainedSelection?.id || defaultSelectionIdForView(state.currentView);
   state.searchCursor = 0;
   setImportStatus(statusMessage);
   renderCurrentView({ preserveViewport: false });
@@ -5418,22 +8178,18 @@ function exportCurrentSvg() {
 buttons.forEach((button) => {
   button.addEventListener("click", () => {
     state.currentView = button.dataset.view;
-    if (isTextFirstView(state.currentView)) {
-      state.selectedEntityId = defaultCardSelectionId(state.currentView);
-    } else {
-      const retainedSelection = state.catalog.find((item) => item.id === state.selectedEntityId && item.view === state.currentView);
-      state.selectedEntityId = retainedSelection?.id || null;
-    }
+    const retainedSelection = state.catalog.find((item) => item.id === state.selectedEntityId && item.view === state.currentView);
+    state.selectedEntityId = retainedSelection?.id || defaultSelectionIdForView(state.currentView);
     renderCurrentView({ preserveViewport: false });
   });
 });
 
 layoutSelectEl.addEventListener("change", () => {
-  if (state.currentView === "ov1" && state.ov1Editor.enabled && layoutSelectEl.value !== "auto") {
+  if (isEditableDiagramView(state.currentView) && state.ov1Editor.enabled && layoutSelectEl.value !== "auto") {
     layoutSelectEl.value = "auto";
     state.layoutMode = "auto";
-    setImportStatus("OV-1 editing uses Auto layout so manual positions stay intact.");
-    setOv1EditorStatus("OV-1 editing uses Auto layout so manual positions stay intact.");
+    setImportStatus(`${editorTitleForView()} uses Auto layout so manual positions stay intact.`);
+    setOv1EditorStatus(`${editorTitleForView()} uses Auto layout so manual positions stay intact.`);
     renderCurrentView({ preserveViewport: false });
     return;
   }
@@ -5530,6 +8286,46 @@ searchInputEl.addEventListener("keydown", (event) => {
 
 searchNextButton.addEventListener("click", focusNextSearchResult);
 
+requirementsSearchEl?.addEventListener("input", () => {
+  searchInputEl.value = requirementsSearchEl.value;
+  state.searchCursor = 0;
+  renderCurrentView({ preserveViewport: true });
+});
+
+requirementsSearchEl?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    focusNextSearchResult();
+  }
+});
+
+requirementsClearEl?.addEventListener("click", () => {
+  searchInputEl.value = "";
+  if (requirementsSearchEl) {
+    requirementsSearchEl.value = "";
+  }
+  state.searchCursor = 0;
+  renderCurrentView({ preserveViewport: true });
+});
+
+requirementsExplorerModalCloseEl?.addEventListener("click", closeRequirementsExplorerModal);
+
+requirementsExplorerModalEl?.addEventListener("click", (event) => {
+  if (event.target === requirementsExplorerModalEl || event.target.classList.contains("requirements-explorer-modal-scrim")) {
+    closeRequirementsExplorerModal();
+  }
+});
+
+requirementsExplorerModalCardEl?.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.requirementsModalId) {
+    closeRequirementsExplorerModal();
+  }
+});
+
 explorerFilterEl.addEventListener("input", renderExplorer);
 
 zoomInButton.addEventListener("click", () => zoomAt(1.15));
@@ -5549,15 +8345,15 @@ ov1EditToggleEl?.addEventListener("click", () => {
   state.ov1Editor.dragPointerId = null;
   state.ov1Editor.dragOffset = null;
   state.ov1Editor.dragMoved = false;
-  if (state.ov1Editor.enabled && state.layoutMode !== "auto") {
+  if (state.ov1Editor.enabled && state.layoutMode !== "auto" && isEditableDiagramView(state.currentView)) {
     state.layoutMode = "auto";
     layoutSelectEl.value = "auto";
   }
   renderCurrentView({ preserveViewport: true });
   setOv1EditorStatus(
     state.ov1Editor.enabled
-      ? "Editing is enabled. Drag actors, drop components from the file, or switch to Arrow Tool."
-      : "Editing is disabled. The OV-1 view is back in browse mode."
+      ? `Editing is enabled. Drag ${editorPaletteLabelForView().toLowerCase()}, reposition visible elements, or switch to ${editorLinkToolLabelForView()}.`
+      : `Editing is disabled. The ${editorTitleForView().replace(" Editor", "")} view is back in browse mode.`
   );
 });
 
@@ -5572,8 +8368,8 @@ ov1ArrowToolEl?.addEventListener("click", () => {
   renderCurrentView({ preserveViewport: true });
   setOv1EditorStatus(
     nextIsArrow
-      ? "Arrow Tool is active. Click a source actor, then a target actor, to add an OV-1 arrow."
-      : "Move mode is active. Drag actors or place components from the file."
+      ? `${editorLinkToolLabelForView()} is active. Click a source element, then a target element, to add a ${editorTitleForView().replace(" Editor", "")} link.`
+      : `Move mode is active. Drag visible elements or place ${editorPaletteLabelForView().toLowerCase()} from the file.`
   );
 });
 
@@ -5584,23 +8380,24 @@ ov1ResetButtonEl?.addEventListener("click", () => {
     return;
   }
   try {
-    const reparsed = parseModelText(stripVisualizerMetadataBlock(state.currentSourceText || modelTextEl.value));
-    applyModel(reparsed, "OV-1 edits were reset to the SysML source semantics.", stripVisualizerMetadataBlock(state.currentSourceText || modelTextEl.value), {
+    const resetSource = state.loadedSourceText || state.currentSourceText || modelTextEl.value;
+    const reparsed = parseModelText(resetSource);
+    applyModel(reparsed, `${editorTitleForView()} edits were reset to the loaded SysML source semantics.`, resetSource, {
       sourcePath: state.currentModelPath,
       analysisPayload: state.analysisPayload
     });
     state.ov1Editor.enabled = true;
     renderCurrentView({ preserveViewport: false });
-    setOv1EditorStatus("OV-1 edits were reset. You can start arranging the view again.");
+    setOv1EditorStatus(`${editorTitleForView()} edits were reset. You can start arranging the view again.`);
   } catch (error) {
-    setOv1EditorStatus(`Unable to reset OV-1 edits: ${error.message}`, true);
+    setOv1EditorStatus(`Unable to reset ${editorTitleForView()} edits: ${error.message}`, true);
   }
 });
 
 svg.addEventListener("click", (event) => {
-  if (state.currentView === "ov1" && state.ov1Editor.enabled && state.ov1Editor.paletteSelectionId) {
+  if (isEditableDiagramView(state.currentView) && state.ov1Editor.enabled && state.ov1Editor.paletteSelectionId) {
     const point = clientToDiagramPoint(event.clientX, event.clientY);
-    placeOv1Component(state.ov1Editor.paletteSelectionId, point);
+    placeEditorComponent(state.ov1Editor.paletteSelectionId, point);
     event.stopPropagation();
     return;
   }
@@ -5622,7 +8419,7 @@ svg.addEventListener("pointerdown", (event) => {
   if (event.target.getAttribute("data-entity-id")) {
     return;
   }
-  if (state.currentView === "ov1" && state.ov1Editor.enabled && (state.ov1Editor.paletteSelectionId || state.ov1Editor.tool === "arrow")) {
+  if (isEditableDiagramView(state.currentView) && state.ov1Editor.enabled && (state.ov1Editor.paletteSelectionId || state.ov1Editor.tool === "arrow")) {
     return;
   }
   state.isPanning = true;
@@ -5631,15 +8428,34 @@ svg.addEventListener("pointerdown", (event) => {
 });
 
 svg.addEventListener("pointermove", (event) => {
-  if (state.currentView === "ov1" && state.ov1Editor.enabled && state.ov1Editor.dragActorId && state.ov1Editor.dragOffset) {
-    const actor = findOv1Actor(state.ov1Editor.dragActorId);
-    if (!actor) {
-      return;
-    }
+  if (isEditableDiagramView(state.currentView) && state.ov1Editor.enabled && state.ov1Editor.dragActorId && state.ov1Editor.dragOffset) {
     const point = clientToDiagramPoint(event.clientX, event.clientY);
-    const position = clampOv1ActorPosition(point.x - state.ov1Editor.dragOffset.x, point.y - state.ov1Editor.dragOffset.y);
-    actor.x = position.x;
-    actor.y = position.y;
+    if (state.currentView === "bdd") {
+      const block = findBddBlock(state.ov1Editor.dragActorId);
+      if (!block) {
+        return;
+      }
+      const height = bddBlockHeight(block);
+      const position = clampBddBlockPosition(point.x - state.ov1Editor.dragOffset.x, point.y - state.ov1Editor.dragOffset.y, block.width, height);
+      block.x = position.x;
+      block.y = position.y;
+    } else if (state.currentView === "ibd") {
+      const part = findIbdPart(state.ov1Editor.dragActorId);
+      if (!part) {
+        return;
+      }
+      const position = clampIbdPartPosition(point.x - state.ov1Editor.dragOffset.x, point.y - state.ov1Editor.dragOffset.y, part.width, part.height);
+      part.x = position.x;
+      part.y = position.y;
+    } else {
+      const actor = findOv1Actor(state.ov1Editor.dragActorId);
+      if (!actor) {
+        return;
+      }
+      const position = clampOv1ActorPosition(point.x - state.ov1Editor.dragOffset.x, point.y - state.ov1Editor.dragOffset.y);
+      actor.x = position.x;
+      actor.y = position.y;
+    }
     state.ov1Editor.dragMoved = true;
     renderCurrentView({ preserveViewport: true });
     return;
@@ -5653,15 +8469,20 @@ svg.addEventListener("pointermove", (event) => {
 });
 
 svg.addEventListener("pointerup", (event) => {
-  if (state.currentView === "ov1" && state.ov1Editor.enabled && state.ov1Editor.dragActorId && state.ov1Editor.dragPointerId === event.pointerId) {
-    const movedActor = findOv1Actor(state.ov1Editor.dragActorId);
+  if (isEditableDiagramView(state.currentView) && state.ov1Editor.enabled && state.ov1Editor.dragActorId && state.ov1Editor.dragPointerId === event.pointerId) {
+    const movedLabel =
+      state.currentView === "bdd"
+        ? findBddBlock(state.ov1Editor.dragActorId)?.name
+        : state.currentView === "ibd"
+          ? findIbdPart(state.ov1Editor.dragActorId)?.name
+          : findOv1Actor(state.ov1Editor.dragActorId)?.label;
     syncSourceTextFromModel();
     state.ov1Editor.dragActorId = null;
     state.ov1Editor.dragPointerId = null;
     state.ov1Editor.dragOffset = null;
-    if (state.ov1Editor.dragMoved && movedActor) {
-      setOv1EditorStatus(`${movedActor.label} was repositioned.`);
-      setImportStatus(`Updated OV-1 placement for ${movedActor.label}.`);
+    if (state.ov1Editor.dragMoved && movedLabel) {
+      setOv1EditorStatus(`${movedLabel} was repositioned.`);
+      setImportStatus(`Updated ${humanize(state.currentView)} placement for ${movedLabel}.`);
     }
     state.ov1Editor.dragMoved = false;
     refreshOv1EditorPanel();
@@ -5678,7 +8499,7 @@ svg.addEventListener("pointerup", (event) => {
 });
 
 svg.addEventListener("dragover", (event) => {
-  if (state.currentView !== "ov1" || !state.ov1Editor.enabled) {
+  if (!isEditableDiagramView(state.currentView) || !state.ov1Editor.enabled) {
     return;
   }
   event.preventDefault();
@@ -5693,17 +8514,17 @@ svg.addEventListener("dragleave", () => {
 });
 
 svg.addEventListener("drop", (event) => {
-  if (state.currentView !== "ov1" || !state.ov1Editor.enabled) {
+  if (!isEditableDiagramView(state.currentView) || !state.ov1Editor.enabled) {
     return;
   }
   event.preventDefault();
   svg.classList.remove("is-dragover");
-  const componentId = event.dataTransfer?.getData("text/ov1-component") || state.ov1Editor.paletteSelectionId;
+  const componentId = event.dataTransfer?.getData("text/sysml-editor-component") || state.ov1Editor.paletteSelectionId;
   if (!componentId) {
     return;
   }
   const point = clientToDiagramPoint(event.clientX, event.clientY);
-  placeOv1Component(componentId, point);
+  placeEditorComponent(componentId, point);
 });
 
 overviewSvg.addEventListener("click", (event) => {

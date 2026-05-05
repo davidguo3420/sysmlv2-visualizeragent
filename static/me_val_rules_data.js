@@ -1,0 +1,271 @@
+window.ME_VAL_RULES_SNAPSHOT = {
+  "source_workbook": "/Users/bsoeder/Library/CloudStorage/OneDrive-TheMITRECorporation/2026/ME VAL Rules.xlsx",
+  "sheet_count": 3,
+  "rule_count": 38,
+  "sheets": [
+    {
+      "sheet": "Standard Modeling",
+      "header": [
+        "#",
+        "Name",
+        "Specification",
+        "errorMessage"
+      ],
+      "rule_count": 25,
+      "rules": [
+        {
+          "index": "1",
+          "name": "ACTIVITYEDGEINCOMING",
+          "specification": "Or1",
+          "error_message": "Control nodes must have at least one incoming control or object flow."
+        },
+        {
+          "index": "2",
+          "name": "ACTIVITYNAME",
+          "specification": "NotEquals1",
+          "error_message": "Activities must be named."
+        },
+        {
+          "index": "3",
+          "name": "ACTORNAME",
+          "specification": "Not1",
+          "error_message": "All Actors must have names."
+        },
+        {
+          "index": "4",
+          "name": "ANNOTATEDELEMENTS",
+          "specification": "Not1",
+          "error_message": "Problem and rationale elements should annotate at least one model element."
+        },
+        {
+          "index": "5",
+          "name": "ARTIFACTNAME",
+          "specification": "NotEquals1",
+          "error_message": "All artifact elements must be named."
+        },
+        {
+          "index": "6",
+          "name": "BLOCKNAME",
+          "specification": "NotEquals1",
+          "error_message": "Blocks must be named."
+        },
+        {
+          "index": "7",
+          "name": "CLASSPROHIBIT-EDIT",
+          "specification": "Or",
+          "error_message": "Unstereotyped classes are prohibited; use blocks, activities, or other elements instead.  Classes in packages created by MagicDraw (such as CSV Import) are exempt."
+        },
+        {
+          "index": "8",
+          "name": "COMMENTBODY",
+          "specification": "NotEquals1",
+          "error_message": "The body of comments, problems, and rationale may not be empty."
+        },
+        {
+          "index": "9",
+          "name": "CONSTRAINTSPECIFICATION",
+          "specification": "Or3",
+          "error_message": "Constraint specifications may not be empty."
+        },
+        {
+          "index": "10",
+          "name": "CONTROLNODEINCOMING",
+          "specification": "GreaterThan1",
+          "error_message": "Joins and merges must have at least two incoming flows."
+        },
+        {
+          "index": "11",
+          "name": "CONTROLNODEOUTGOING",
+          "specification": "GreaterThan1",
+          "error_message": "Forks and decisions must have at least two outgoing flows."
+        },
+        {
+          "index": "12",
+          "name": "DECISIONNODENAME",
+          "specification": "NotEquals1",
+          "error_message": "Decision nodes must have a name (this is used to specify the decision)."
+        },
+        {
+          "index": "13",
+          "name": "DIAGRAMNAME",
+          "specification": "NotEquals1",
+          "error_message": "Diagram names may not be blank."
+        },
+        {
+          "index": "14",
+          "name": "ENUMERATIONLITERAL",
+          "specification": "Not1",
+          "error_message": "Enumerations must own at least one literal."
+        },
+        {
+          "index": "15",
+          "name": "FLOWFINALINCOMING",
+          "specification": "GreaterThanOrEquals1",
+          "error_message": "All flow final nodes must have one incoming flow."
+        },
+        {
+          "index": "16",
+          "name": "IBDOWNER",
+          "specification": "IfThenElse1",
+          "error_message": "IBDs must be owned by a block."
+        },
+        {
+          "index": "17",
+          "name": "MERGEJOINOUTGOING",
+          "specification": "Equals1",
+          "error_message": "Merge and join nodes must have exactly 1 outgoing flow (object or control)."
+        },
+        {
+          "index": "18",
+          "name": "OPERATIONNAME",
+          "specification": "NotEquals1",
+          "error_message": "Operations must be named."
+        },
+        {
+          "index": "19",
+          "name": "PACKAGENAME",
+          "specification": "NotEquals1",
+          "error_message": "Packages must be named."
+        },
+        {
+          "index": "20",
+          "name": "SIGNALEVENTSIGNAL",
+          "specification": "Not1",
+          "error_message": "Signal Events must have a signal defined."
+        },
+        {
+          "index": "21",
+          "name": "SIGNALNAME",
+          "specification": "NotEquals1",
+          "error_message": "All signals must be named."
+        },
+        {
+          "index": "22",
+          "name": "STMACHINENAME",
+          "specification": "NotEquals1",
+          "error_message": "State machine names may not be blank."
+        },
+        {
+          "index": "23",
+          "name": "TERMNAME",
+          "specification": "NotEquals1",
+          "error_message": "Glossary terms must be named."
+        },
+        {
+          "index": "24",
+          "name": "USECASENAME",
+          "specification": "NotEquals1",
+          "error_message": "Use Cases must be named."
+        },
+        {
+          "index": "25",
+          "name": "VALUENAME",
+          "specification": "NotEquals1",
+          "error_message": "Value properties must be named."
+        }
+      ]
+    },
+    {
+      "sheet": "Optional",
+      "header": [
+        "#",
+        "Name",
+        "Specification",
+        "errorMessage"
+      ],
+      "rule_count": 8,
+      "rules": [
+        {
+          "index": "1",
+          "name": "ACTPARTYPE",
+          "specification": "Not1",
+          "error_message": "All activity parameter nodes must be typed by signals, BLOCKS, or value types."
+        },
+        {
+          "index": "2",
+          "name": "CONNECTOREND",
+          "specification": "IfThenElse1",
+          "error_message": "Connector ends must be proxy ports."
+        },
+        {
+          "index": "3",
+          "name": "CONSTRAINTBLOCKDOC",
+          "specification": "Not1",
+          "error_message": "All constraint blocks must have documentation."
+        },
+        {
+          "index": "4",
+          "name": "CONSTRAINTTYPE",
+          "specification": "Not1",
+          "error_message": "Constraint properties must be typed by constraint blocks."
+        },
+        {
+          "index": "5",
+          "name": "CONVEYTYPE-BLOCK",
+          "specification": "IfThenElse1",
+          "error_message": "Item flows may only convey BLOCKS."
+        },
+        {
+          "index": "6",
+          "name": "CONVEYTYPE-SIGNAL",
+          "specification": "IfThenElse1",
+          "error_message": "Item flows may only convey signals."
+        },
+        {
+          "index": "7",
+          "name": "ENTRYEXITNAME",
+          "specification": "Or1",
+          "error_message": "Entry and exit points for state machines must be named."
+        },
+        {
+          "index": "8",
+          "name": "STMCLASSIFIERBEHAVIOR",
+          "specification": "IfThenElse1",
+          "error_message": "If a block owns one or more state machines, one of those state machine must be the block's classifier behavior."
+        }
+      ]
+    },
+    {
+      "sheet": "Executable",
+      "header": [
+        "#",
+        "Name",
+        "Specification",
+        "errorMessage"
+      ],
+      "rule_count": 5,
+      "rules": [
+        {
+          "index": "1",
+          "name": "ACCEPTEVENTOUTPUT",
+          "specification": "IfThenElse1",
+          "error_message": "Accept Events triggered by signal events must own an output pin.  If you are modeling a signal that triggers a state transition, associate the object flow with an item flow and realize the transition."
+        },
+        {
+          "index": "2",
+          "name": "MESSAGEFLOWNEEDED",
+          "specification": "IfThenElse1",
+          "error_message": "This message signature is a signal and is not realized by any item flows or flow sets."
+        },
+        {
+          "index": "3",
+          "name": "MESSAGESIGNATURE",
+          "specification": "IfThenElse1",
+          "error_message": "All messages on sequence diagrams must have signatures assigned (signal or operation).  Reply, Create, and Delete Messages are exempt."
+        },
+        {
+          "index": "4",
+          "name": "STMINTEGRITY",
+          "specification": "IfThenElse1",
+          "error_message": "State machines may only call operations owned within their owning block's structural decomposition (owned by blocks typing its parts)."
+        },
+        {
+          "index": "5",
+          "name": "SUBMACHINESTR",
+          "specification": "Or2",
+          "error_message": "Submachine states must reference state machines owned by the owning block or blocks that type part properties within the owning block's structure."
+        }
+      ]
+    }
+  ]
+};
