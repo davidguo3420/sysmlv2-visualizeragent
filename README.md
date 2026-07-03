@@ -20,10 +20,7 @@ Implemented:
 Planned:
 
 * Open-source VLM diagram critique
-* Automated feedback reports
-* Semantic vs. visual issue classification
 * Iterative diagram refinement loop
-* Optional agent planner for rerendering and repair decisions
 
 ---
 
