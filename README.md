@@ -377,19 +377,6 @@ These checks are intentionally simple, fast, and repeatable. They are meant to r
 
 ---
 
-## Why PNG Output Matters
-
-Most open-source VLMs accept raster images more reliably than raw SVG. Therefore, the pipeline prepares both:
-
-```text
-initial.svg  → source-quality vector diagram
-initial.png  → VLM-ready visual preview
-```
-
-The next major development step is to pass `initial.png` into a local or open-source VLM for visual critique.
-
----
-
 ## Planned VLM Feedback Stage
 
 The future VLM stage will evaluate diagram quality beyond deterministic checks.
@@ -437,42 +424,10 @@ convert SVG to PNG
     ↓
 VLM critique
     ↓
-planner decides:
-        - accept diagram
-        - repair SysML
-        - adjust layout
-        - rerender
-    ↓
 final SVG + PNG + report
 ```
 
 The final goal is a deployable GitHub repository that can process many SysML v2 files and produce refined diagram outputs with traceable feedback reports.
-
----
-
-## Development Notes
-
-Generated outputs should usually not be committed.
-
-Recommended `.gitignore` entries:
-
-```gitignore
-.venv/
-__pycache__/
-*.pyc
-
-workspace/
-output_diagrams/
-input_models/
-```
-
-If you want to include small test models in the repo, place them in:
-
-```text
-examples/
-```
-
-instead of committing a large dataset.
 
 ---
 
