@@ -49,7 +49,12 @@ class BrowserSVGRenderer:
         self.headless = headless
         self.timeout_ms = timeout_ms
 
-    def render_source_to_svg_text(self, sysml_source: str) -> str:
+    def render_source_to_svg_text(
+        self,
+        sysml_source: str,
+        layout: str = "auto",
+        detail: str = "standard",
+    ) -> str:
         """
         Render SysML source through the existing browser UI and return SVG text.
         """
@@ -60,6 +65,9 @@ class BrowserSVGRenderer:
 
             try:
                 page.goto(self.base_url, wait_until="networkidle")
+
+                page.locator("#layout-select").select_option(layout)
+                page.locator("#detail-select").select_option(detail)
 
                 # Fill the SysML editor.
                 page.locator("#model-text").fill(sysml_source)
@@ -91,7 +99,13 @@ class BrowserSVGRenderer:
             finally:
                 browser.close()
 
-    def render_file(self, input_path: Path, output_path: Path) -> BrowserRenderResult:
+    def render_file(
+        self,
+        input_path: Path,
+        output_path: Path,
+        layout: str = "auto",
+        detail: str = "standard",
+    ) -> BrowserRenderResult:
         """
         Render one SysML file to one SVG file.
         """
@@ -106,7 +120,11 @@ class BrowserSVGRenderer:
             )
 
         try:
-            svg_text = self.render_source_to_svg_text(sysml_source)
+            svg_text = self.render_source_to_svg_text(
+                sysml_source,
+                layout=layout,
+                detail=detail,
+            )
         except PlaywrightTimeoutError as exc:
             return BrowserRenderResult(
                 success=False,

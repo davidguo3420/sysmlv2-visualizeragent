@@ -29,6 +29,12 @@ from tools.svg_quality_checks import write_quality_report
 
 from tools.browser_svg_renderer import BrowserSVGRenderer
 
+from dataclasses import asdict
+from tools.vlm_critic import critique_image
+from tools.svg_to_png import svg_to_png
+
+from tools.layout_repair import repair_layout
+
 
 SUPPORTED_EXTENSIONS = {".sysml", ".txt"}
 
@@ -117,6 +123,9 @@ def batch_render(
     show_browser: bool = False,
     percent: float | None = None,
     limit: int | None = None,
+    repair: bool = True,
+    model: str = "qwen2.5vl",
+    max_repair_attempts: int = 4,
 ) -> int:
     """
     Render SysML files in input_dir.
@@ -182,6 +191,39 @@ def batch_render(
                 print("    quality: fail")
                 for issue in quality_report.issues:
                     print(f"      - {issue}")
+
+            png_result = svg_to_png(output_svg)
+
+            if png_result.success:
+                print("    png: created")
+            else:
+                print("    png: failed")
+                print(f"      - {png_result.error}")
+
+            if repair:
+                print("    repair: enabled")
+
+                repair_report = repair_layout(
+                    input_file=input_file,
+                    output_dir=output_subdir,
+                    model=model,
+                    max_attempts=max_repair_attempts,
+                    show_browser=show_browser,
+                )
+
+                if repair_report.get("success"):
+                    print(
+                        "    repair: success "
+                        f"(accepted={repair_report.get('accepted')}, "
+                        f"layout={repair_report.get('best_layout')}, "
+                        f"detail={repair_report.get('best_detail')})"
+                    )
+                else:
+                    print("    repair: failed")
+                    print(f"      - {repair_report.get('error')}")
+            else:
+                print("    repair: disabled")
+
         else:
             failures += 1
             print("    render: failed")
@@ -230,6 +272,25 @@ def parse_args() -> argparse.Namespace:
         help="Render at most this many files after applying --percent.",
     )
 
+    parser.add_argument(
+        "--no-repair",
+        action="store_true",
+        help="Disable the Qwen-planned repair loop. By default, repair is enabled.",
+    )
+
+    parser.add_argument(
+        "--model",
+        default="qwen2.5vl",
+        help="VLM model name to use through Ollama.",
+    )
+
+    parser.add_argument(
+        "--max-repair-attempts",
+        type=int,
+        default=4,
+        help="Maximum number of Qwen-planned repair attempts per model.",
+    )
+
     return parser.parse_args()
 
 
@@ -242,6 +303,9 @@ def main() -> None:
         show_browser=args.show_browser,
         percent=args.percent,
         limit=args.limit,
+        repair=not args.no_repair,
+        model=args.model,
+        max_repair_attempts=args.max_repair_attempts,
     )
 
     raise SystemExit(1 if failures else 0)

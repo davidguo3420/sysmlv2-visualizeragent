@@ -1,54 +1,36 @@
 # SysML v2 Visualizer Agent
 
-A batch rendering and diagram-preparation pipeline built on top of [`sysml2viz`](https://github.com/bsoeder/sysml2viz). The current system takes SysML v2-style model files, renders SVG diagrams through the existing browser-based visualizer, runs deterministic SVG quality checks, and converts the resulting SVGs into PNG previews.
+This project batch-renders SysML v2 input files into SVG/PNG diagrams, then uses a local open-source vision-language model through Ollama to critique and repair diagram layout settings.
 
-This repository is being developed toward an agentic diagram-refinement workflow where open-source vision-language models (VLMs) critique generated diagrams and feed back layout or model-improvement suggestions.
+The current pipeline is:
+
+```text
+SysML v2 file
+  → browser-based sysml2viz rendering
+  → SVG output
+  → PNG preview
+  → Qwen2.5-VL critique
+  → Qwen-planned layout/detail repair
+  → final accepted SVG/PNG diagram
+```
+
+The SysML v2 source is not modified during repair. The repair loop only changes renderer settings such as layout and detail level.
 
 ---
 
 ## Current Status
 
-Implemented:
+The current version supports:
 
-* Browser-automated SysML-to-SVG rendering
-* Batch rendering for folders of `.sysml` and `.txt` files
-* Optional dataset subsetting with `--percent` and `--limit`
+* Batch rendering `.sysml` and `.txt` input files
+* SVG generation through the existing browser visualizer
+* PNG preview generation
 * Deterministic SVG quality checks
-* SVG-to-PNG preview generation using Playwright
-* Per-model output folders containing rendered diagrams and JSON reports
+* Qwen2.5-VL diagram critique through Ollama
+* Qwen-planned layout repair
+* Final accepted diagram output
 
-Planned:
-
-* Open-source VLM diagram critique
-* Iterative diagram refinement loop
-
----
-
-## Pipeline Overview
-
-The current pipeline is:
-
-```text
-input_models/*.sysml
-        ↓
-batch_render.py
-        ↓
-tools/browser_svg_renderer.py
-        ↓
-running sysml2viz browser UI
-        ↓
-initial.svg
-        ↓
-tools/svg_quality_checks.py
-        ↓
-quality_report.json
-        ↓
-tools/svg_to_png.py
-        ↓
-initial.png
-```
-
-The final output for each input file is a rendered SVG diagram and a PNG preview.
+Repair mode is currently enabled by default.
 
 ---
 
@@ -56,105 +38,69 @@ The final output for each input file is a rendered SVG diagram and a PNG preview
 
 ```text
 sysmlv2-visualizeragent/
-│
 ├── app.py
 ├── batch_render.py
-├── requirements.txt
-│
+├── input_models/
 ├── tools/
+│   ├── __init__.py
 │   ├── browser_svg_renderer.py
+│   ├── layout_repair.py
 │   ├── probe_sysml2viz_page.py
 │   ├── svg_quality_checks.py
-│   └── svg_to_png.py
-│
-├── input_models/
-│   └── sample_model.sysml
-│
-├── output_diagrams/
-│   └── ...
-│
-└── workspace/
-    └── ...
+│   ├── svg_to_png.py
+│   ├── vlm_critic.py
+│   └── vlm_repair_planner.py
+├── requirements.txt
+└── README.md
 ```
 
-### Important Files
-
-| File                            | Purpose                                                    |
-| ------------------------------- | ---------------------------------------------------------- |
-| `app.py`                        | Original `sysml2viz` local web server                      |
-| `batch_render.py`               | Batch entry point for rendering many SysML files           |
-| `tools/browser_svg_renderer.py` | Uses Playwright to automate the browser UI and extract SVG |
-| `tools/svg_quality_checks.py`   | Runs deterministic checks on rendered SVG files            |
-| `tools/svg_to_png.py`           | Converts SVG diagrams into PNG previews using Playwright   |
-| `tools/probe_sysml2viz_page.py` | Debugging/probing script for inspecting page elements      |
+Generated outputs are written to `output_diagrams/`.
 
 ---
 
-## Requirements
+## Installation
 
-You need:
+Create and activate a Python virtual environment.
 
-* Python 3.12 recommended
-* A virtual environment
-* Playwright with Chromium installed
-* The original `sysml2viz` app working locally
-
-The current workflow assumes the local server runs at:
-
-```text
-http://127.0.0.1:8000
-```
-
----
-
-## Setup
-
-### 1. Clone the repository
-
-```powershell
-git clone https://github.com/YOUR_USERNAME/sysmlv2-visualizeragent.git
-cd sysmlv2-visualizeragent
-```
-
-### 2. Create and activate a virtual environment
+On Windows PowerShell:
 
 ```powershell
 python -m venv .venv
-```
-
-Activate it:
-
-```powershell
 .venv\Scripts\Activate.ps1
 ```
 
-If PowerShell blocks script execution, use Command Prompt instead:
+If PowerShell blocks activation because of execution policy, use Command Prompt instead:
 
 ```cmd
 .venv\Scripts\activate.bat
 ```
 
-### 3. Install dependencies
+Install dependencies:
 
 ```powershell
 python -m pip install -r requirements.txt
+python -m playwright install chromium
 ```
 
-### 4. Install Playwright browser support
+Install Ollama separately, then pull the vision model:
 
 ```powershell
-python -m playwright install chromium
+ollama pull qwen2.5vl
+```
+
+Test that the model responds:
+
+```powershell
+ollama run qwen2.5vl "Say only: Ready"
 ```
 
 ---
 
 ## Running the Current Pipeline
 
-The pipeline requires two terminals.
+The current workflow uses multiple terminals.
 
----
-
-### Terminal 1: Start the local visualizer server
+### Terminal 1: Start the SysML visualizer server
 
 From the repository root:
 
@@ -162,7 +108,7 @@ From the repository root:
 python app.py
 ```
 
-Expected output:
+This should print something like:
 
 ```text
 Serving SysML2 visualizer at http://127.0.0.1:8000
@@ -170,279 +116,262 @@ Serving SysML2 visualizer at http://127.0.0.1:8000
 
 Leave this terminal running.
 
+You can also open this URL in a browser to confirm the visualizer works:
+
+```text
+http://127.0.0.1:8000
+```
+
 ---
 
-### Terminal 2: Run the batch renderer
+### Terminal 2: Start Ollama
 
-In a second terminal, from the repository root:
+If Ollama is already running in the background, you may not need this terminal.
+
+Otherwise run:
 
 ```powershell
-python batch_render.py input_models output_diagrams
+ollama serve
 ```
 
-This renders every supported file in `input_models/`.
+Leave this terminal running.
 
-Supported input extensions:
+If Qwen fails because of GPU/CUDA issues on Windows, force Ollama to use CPU mode:
+
+```powershell
+$env:CUDA_VISIBLE_DEVICES="-1"
+$env:OLLAMA_LLM_LIBRARY="cpu"
+ollama serve
+```
+
+CPU mode is slower, but it is more stable on machines with limited GPU memory.
+
+---
+
+### Terminal 3: Run the batch renderer
+
+Run the pipeline from the repository root:
+
+```powershell
+python batch_render.py input_models output_diagrams --limit 1
+```
+
+Because repair mode is enabled by default, this command will:
+
+1. render the initial SVG,
+2. convert it to PNG,
+3. ask Qwen2.5-VL to critique it,
+4. ask Qwen2.5-VL to choose better render settings if needed,
+5. rerender the diagram,
+6. save the best final SVG/PNG.
+
+Expected output looks like:
 
 ```text
-.sysml
-.txt
+Found 1 total model file(s).
+Rendering 1 selected model file(s).
+
+[1/1] Rendering input_models\000001.sysml
+    → output_diagrams\000001\initial.svg
+    render: success
+    quality: pass
+    png: created
+    repair: enabled
+    attempt: layout=auto, detail=standard
+    planner next: layout=hierarchy, detail=compact
+    attempt: layout=hierarchy, detail=compact
+    accepted by VLM; stopping repair loop
+    repair: success (accepted=True, layout=hierarchy, detail=compact)
+
+Done. Failures: 0
 ```
 
 ---
 
-## Example Output
+## Output Files
 
-For an input file:
-
-```text
-input_models/sample_model.sysml
-```
-
-the pipeline creates:
+For each input model, the pipeline creates an output folder like:
 
 ```text
 output_diagrams/
-└── sample_model/
+└── 000001/
     ├── initial.svg
     ├── initial.png
+    ├── final.svg
+    ├── final.png
     ├── report.json
-    └── quality_report.json
+    ├── quality_report.json
+    ├── repair_report.json
+    └── iterations/
+        ├── attempt_00_auto_standard/
+        │   ├── diagram.svg
+        │   ├── diagram.png
+        │   ├── quality_report.json
+        │   ├── vlm_report.json
+        │   └── attempt_report.json
+        ├── planner_after_attempt_00/
+        │   └── planner_report.json
+        └── attempt_01_hierarchy_compact/
+            ├── diagram.svg
+            ├── diagram.png
+            ├── quality_report.json
+            ├── vlm_report.json
+            └── attempt_report.json
 ```
 
-### Output Files
+The most important files are:
 
-| File                  | Meaning                                                    |
-| --------------------- | ---------------------------------------------------------- |
-| `initial.svg`         | Rendered SVG diagram extracted from the browser visualizer |
-| `initial.png`         | PNG preview generated from the SVG                         |
-| `report.json`         | Render status and file-level metadata                      |
-| `quality_report.json` | Deterministic SVG quality-check results                    |
+```text
+final.svg
+final.png
+repair_report.json
+```
+
+`final.svg` is the final selected diagram.
+
+`final.png` is the preview image used for visual inspection.
+
+`repair_report.json` records which layout/detail settings were tried and which attempt was selected.
 
 ---
 
-## Rendering Only Part of a Dataset
+## Running Without Repair
 
-For large datasets, use `--percent` or `--limit`.
-
-### Render the first 10 percent
+For faster debugging, disable Qwen repair:
 
 ```powershell
-python batch_render.py input_models output_diagrams --percent 10
+python batch_render.py input_models output_diagrams --limit 1 --no-repair
 ```
 
-### Render the first 25 percent
+This only renders the initial diagram and skips the VLM critique/repair loop.
 
-```powershell
-python batch_render.py input_models output_diagrams --percent 25
-```
+---
 
-### Render only the first 5 files
+## Rendering More Files
+
+Render the first 5 files:
 
 ```powershell
 python batch_render.py input_models output_diagrams --limit 5
 ```
 
-### Render the first 10 percent, capped at 50 files
+Render a percentage of the input folder:
 
 ```powershell
-python batch_render.py input_models output_diagrams --percent 10 --limit 50
+python batch_render.py input_models output_diagrams --percent 10
 ```
 
-If both options are provided, `--percent` is applied first, then `--limit`.
-
----
-
-## Showing the Browser During Rendering
-
-By default, rendering is headless.
-
-To watch Chromium interact with the visualizer UI:
+Render all files:
 
 ```powershell
-python batch_render.py input_models output_diagrams --show-browser
+python batch_render.py input_models output_diagrams
 ```
 
-This is useful for debugging.
+Be careful when rendering all files with repair enabled. Qwen2.5-VL can be slow, especially on CPU.
 
 ---
 
-## Single-File SVG Rendering
+## Important Notes
 
-You can render one SysML file directly:
+The input folder is currently expected to be:
+
+```text
+input_models/
+```
+
+The output folder is usually:
+
+```text
+output_diagrams/
+```
+
+`output_diagrams/` should not be committed to Git because it contains generated artifacts.
+
+The repair loop does not edit the SysML v2 source files. It only changes render settings such as:
+
+```text
+layout = auto | hierarchy | grid | radial
+detail = standard | compact | full
+```
+
+The visualizer server must be running at:
+
+```text
+http://127.0.0.1:8000
+```
+
+Ollama must be available at:
+
+```text
+http://127.0.0.1:11434
+```
+
+---
+
+## Common Issues
+
+### `ERR_CONNECTION_REFUSED`
+
+This usually means the visualizer server is not running.
+
+Start it in Terminal 1:
 
 ```powershell
-python tools/browser_svg_renderer.py input_models/sample_model.sysml workspace/test_output.svg --show-browser
-```
-
-This produces:
-
-```text
-workspace/test_output.svg
+python app.py
 ```
 
 ---
 
-## Single-File SVG Quality Check
+### Ollama connection error
 
-Run deterministic checks on one SVG:
+Make sure Ollama is running:
 
 ```powershell
-python tools/svg_quality_checks.py output_diagrams/sample_model/initial.svg
+ollama serve
 ```
 
-Example output:
-
-```json
-{
-  "success": true,
-  "issues": [],
-  "file_size_bytes": 4129,
-  "text_count": 6,
-  "shape_count": 28,
-  "path_count": 6,
-  "group_count": 6,
-  "has_viewbox": true,
-  "width": null,
-  "height": null
-}
-```
-
-A missing `width` or `height` is not necessarily an error if the SVG has a valid `viewBox`.
-
----
-
-## Single-File SVG to PNG Conversion
-
-Convert one SVG to PNG:
+Also verify the model exists:
 
 ```powershell
-python tools/svg_to_png.py output_diagrams/sample_model/initial.svg
+ollama list
 ```
 
-This produces:
+If needed, pull the model:
 
-```text
-output_diagrams/sample_model/initial.png
+```powershell
+ollama pull qwen2.5vl
 ```
-
-This converter uses Playwright rather than CairoSVG so that it works without installing native Cairo libraries on Windows.
 
 ---
 
-## How Rendering Works
+### CUDA or GPU error from Ollama
 
-The original `app.py` does not expose a server-side SVG rendering API. It serves a browser application, and the diagram is generated client-side in the DOM.
+Force CPU mode:
 
-Because of that, this project uses Playwright to automate the existing UI:
-
-```text
-1. Open http://127.0.0.1:8000
-2. Fill the #model-text textarea with SysML source
-3. Click the #load-text button
-4. Wait for the #diagram SVG element
-5. Extract the SVG outerHTML
-6. Save it as initial.svg
+```powershell
+$env:CUDA_VISIBLE_DEVICES="-1"
+$env:OLLAMA_LLM_LIBRARY="cpu"
+ollama serve
 ```
 
-The important UI element IDs discovered by probing the page are:
-
-| Element           | ID           |
-| ----------------- | ------------ |
-| SysML textarea    | `model-text` |
-| Parse button      | `load-text`  |
-| Main diagram SVG  | `diagram`    |
-| Export SVG button | `export-svg` |
-| Overview SVG      | `overview`   |
+Then rerun the batch pipeline.
 
 ---
 
-## Deterministic SVG Quality Checks
+### `No module named tools`
 
-The quality checker currently verifies:
-
-* SVG file exists
-* SVG parses as XML
-* Root element is `<svg>`
-* File is not suspiciously small
-* Diagram has text labels
-* Diagram has graphical elements
-* Diagram has a `viewBox` or explicit dimensions
-* Counts of text, paths, shapes, and groups
-
-These checks are intentionally simple, fast, and repeatable. They are meant to run before any VLM-based critique.
-
----
-
-## Planned VLM Feedback Stage
-
-The future VLM stage will evaluate diagram quality beyond deterministic checks.
-
-Possible VLM feedback categories:
-
-* Label readability
-* Visual clutter
-* Node overlap
-* Edge crossing
-* Missing visual hierarchy
-* Diagram layout quality
-* Whether the diagram visually represents the source SysML model
-
-Planned VLM output format:
-
-```json
-{
-  "accepted": false,
-  "issue_type": "visual_layout",
-  "issues": [
-    "Text labels overlap near the center of the diagram.",
-    "Several connector lines cross through block labels."
-  ],
-  "suggested_fix": "Increase node spacing and rerender using a hierarchy layout."
-}
-```
-
-This feedback will later feed into an agentic refinement loop.
-
----
-
-## Intended Future Agent Loop
-
-The long-term architecture is:
+Make sure the repository contains:
 
 ```text
-SysML source
-    ↓
-render SVG
-    ↓
-run deterministic checks
-    ↓
-convert SVG to PNG
-    ↓
-VLM critique
-    ↓
-final SVG + PNG + report
+tools/__init__.py
 ```
 
-The final goal is a deployable GitHub repository that can process many SysML v2 files and produce refined diagram outputs with traceable feedback reports.
+Then run commands from the repository root.
 
----
+Use:
 
-## Current Milestone
-
-This repository currently supports:
-
-```text
-batch SysML input
-    → browser-rendered SVG
-    → deterministic quality report
-    → PNG preview
+```powershell
+python -m tools.layout_repair input_models\000001.sysml output_diagrams\000001_repair --model qwen2.5vl
 ```
 
-The next milestone is:
-
-```text
-PNG preview
-    → open-source VLM critique
-    → structured feedback report
-```
+instead of running `layout_repair.py` directly.
