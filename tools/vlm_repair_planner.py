@@ -53,49 +53,32 @@ def build_repair_prompt(
     previous_attempts: list[dict],
 ) -> str:
     return f"""
-You are a diagram layout repair planner for a SysML v2 visualizer.
+Choose next render settings for a SysML diagram.
 
-The SysML source must never be edited.
+Do not edit SysML source.
 
-You may only choose new render settings.
+Allowed layouts: auto, hierarchy, grid, radial
+Allowed details: standard, compact, full
 
-Allowed layout values:
-- auto
-- hierarchy
-- grid
-- radial
+Critique:
+{json.dumps(critique)}
 
-Allowed detail values:
-- standard
-- compact
-- full
+Previous attempts:
+{json.dumps(previous_attempts)}
 
-The current VLM critique is:
+Rules:
+- Avoid repeated layout/detail pairs.
+- overlap or clipping -> compact
+- auto failed -> hierarchy
+- hierarchy failed -> grid
+- grid failed -> radial
+- clutter high -> compact
 
-{json.dumps(critique, indent=2)}
-
-Previous render attempts are:
-
-{json.dumps(previous_attempts, indent=2)}
-
-Choose the next render settings most likely to improve readability.
-
-Guidelines:
-- If labels overlap, prefer compact detail.
-- If nodes overlap in auto layout, try hierarchy or grid.
-- If hierarchy is too dense, try grid.
-- If grid is still cluttered, try radial.
-- Avoid repeating an exact layout/detail pair already tried.
-- Do not suggest editing SysML.
-- Do not suggest changing the source model.
-- Return JSON only.
-
-Return this schema:
-
+Return JSON only:
 {{
   "layout": "hierarchy",
   "detail": "compact",
-  "reason": "Compact hierarchy may reduce label overlap and make containment relationships clearer."
+  "reason": "short reason"
 }}
 """
 
@@ -150,6 +133,32 @@ def fallback_plan(previous_attempts: list[dict]) -> dict | None:
 
     return None
 
+def plan_from_critic_recommendation(
+    critique: dict,
+    previous_attempts: list[dict],
+) -> dict | None:
+    recommended_layout = critique.get("recommended_layout")
+    recommended_detail = critique.get("recommended_detail")
+
+    if recommended_layout not in VALID_LAYOUTS:
+        return None
+
+    if recommended_detail not in VALID_DETAILS:
+        return None
+
+    previous_pairs = {
+        (attempt.get("layout"), attempt.get("detail"))
+        for attempt in previous_attempts
+    }
+
+    if (recommended_layout, recommended_detail) in previous_pairs:
+        return None
+
+    return {
+        "layout": recommended_layout,
+        "detail": recommended_detail,
+        "reason": "Used layout/detail settings recommended directly by the VLM critic.",
+    }
 
 def propose_repair_settings(
     image_path: Path,
@@ -166,6 +175,19 @@ def propose_repair_settings(
             error="Image file does not exist.",
         )
 
+    critic_plan = plan_from_critic_recommendation(
+        critique=critique,
+        previous_attempts=previous_attempts,
+    )
+
+    if critic_plan is not None:
+        return RepairPlannerResult(
+            success=True,
+            image_path=str(image_path),
+            model=model,
+            parsed_json=critic_plan,
+        )
+
     try:
         image_base64 = encode_image_base64(image_path)
 
@@ -179,14 +201,15 @@ def propose_repair_settings(
             "stream": False,
             "format": "json",
             "options": {
-                "temperature": 0.2
+                "temperature": 0,
+                "num_predict": 120,
             },
         }
 
         response = requests.post(
             ollama_url,
             json=payload,
-            timeout=180,
+            timeout=600,
         )
 
         response.raise_for_status()

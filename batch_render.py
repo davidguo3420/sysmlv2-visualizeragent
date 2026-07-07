@@ -35,6 +35,7 @@ from tools.svg_to_png import svg_to_png
 
 from tools.layout_repair import repair_layout
 
+from tools.svg_padding import add_svg_padding
 
 SUPPORTED_EXTENSIONS = {".sysml", ".txt"}
 
@@ -126,6 +127,7 @@ def batch_render(
     repair: bool = True,
     model: str = "qwen2.5vl",
     max_repair_attempts: int = 4,
+    single_file: Path | None = None,
 ) -> int:
     """
     Render SysML files in input_dir.
@@ -135,17 +137,37 @@ def batch_render(
     """
     renderer = BrowserSVGRenderer(headless=not show_browser)
 
-    all_model_files = find_model_files(input_dir)
+    if single_file is not None:
+        if not single_file.exists():
+            print(f"Specified input file does not exist: {single_file}")
+            return 1
 
-    if not all_model_files:
-        print(f"No .sysml or .txt files found in {input_dir}")
-        return 1
+        if not single_file.is_file():
+            print(f"Specified path is not a file: {single_file}")
+            return 1
 
-    model_files = select_subset(
-        files=all_model_files,
-        percent=percent,
-        limit=limit,
-    )
+        if single_file.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            print(
+                f"Specified file must have one of these extensions: "
+                f"{sorted(SUPPORTED_EXTENSIONS)}"
+            )
+            return 1
+
+        all_model_files = [single_file]
+        model_files = [single_file]
+
+    else:
+        all_model_files = find_model_files(input_dir)
+
+        if not all_model_files:
+            print(f"No .sysml or .txt files found in {input_dir}")
+            return 1
+
+        model_files = select_subset(
+            files=all_model_files,
+            percent=percent,
+            limit=limit,
+        )
 
     print(f"Found {len(all_model_files)} total model file(s).")
     print(f"Rendering {len(model_files)} selected model file(s).")
@@ -181,6 +203,8 @@ def batch_render(
 
         if result.success:
             print("    render: success")
+
+            add_svg_padding(output_svg)
 
             quality_report_path = output_subdir / "quality_report.json"
             quality_report = write_quality_report(output_svg, quality_report_path)
@@ -219,6 +243,7 @@ def batch_render(
                         f"detail={repair_report.get('best_detail')})"
                     )
                 else:
+                    failures += 1
                     print("    repair: failed")
                     print(f"      - {repair_report.get('error')}")
             else:
@@ -291,6 +316,13 @@ def parse_args() -> argparse.Namespace:
         help="Maximum number of Qwen-planned repair attempts per model.",
     )
 
+    parser.add_argument(
+        "--file",
+        type=Path,
+        default=None,
+        help="Render only one specific input file.",
+    )
+
     return parser.parse_args()
 
 
@@ -306,6 +338,7 @@ def main() -> None:
         repair=not args.no_repair,
         model=args.model,
         max_repair_attempts=args.max_repair_attempts,
+        single_file=args.file,
     )
 
     raise SystemExit(1 if failures else 0)
